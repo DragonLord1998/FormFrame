@@ -76,6 +76,7 @@ class ColabRemoteRuntime:
             )
         self.probe: dict[str, object] = {}
         self.transfer_metrics: dict[str, Any] = {}
+        self.last_bootstrap_output = ""
         self.remote_cache_dir = settings.remote_cache_dir or repo_root / "data" / "remote-cache"
 
     def start(self, progress: ProgressCallback) -> dict[str, Any]:
@@ -88,6 +89,7 @@ class ColabRemoteRuntime:
                 self.gateway.close()
             if not session_created:
                 raise
+            self._capture_failure_diagnostics()
             stopped = self.cli.stop()
             if stopped.returncode:
                 cleanup_detail = (
@@ -140,6 +142,7 @@ for value in (
         bootstrap_output = "\n".join(
             part for part in (bootstrap_result.stdout, bootstrap_result.stderr) if part
         )
+        self.last_bootstrap_output = bootstrap_output
         try:
             bootstrap_status = _parse_bootstrap_status(bootstrap_output)
         except RemoteRuntimeError as exc:
@@ -458,6 +461,33 @@ print("FORMFRAME_LORA_CACHE:verified")
         if self.gateway is None:
             raise RemoteRuntimeError("Cloudflare gateway has not been initialized")
         return self.gateway
+
+    def _capture_failure_diagnostics(self) -> None:
+        if not hasattr(self, "repo_root"):
+            return
+        destination_root = (
+            self.repo_root
+            / "data"
+            / "validation"
+            / "live-a100"
+            / "failure-logs"
+            / str(int(time.time()))
+        )
+        destination_root.mkdir(parents=True, exist_ok=True)
+        if self.last_bootstrap_output:
+            (destination_root / "bootstrap-cli.log").write_text(
+                self.last_bootstrap_output,
+                encoding="utf-8",
+            )
+        for name in ("comfyui", "gateway", "cloudflared"):
+            try:
+                self.cli.download(
+                    f"/content/formframe/logs/{name}.log",
+                    destination_root / f"{name}.log",
+                    timeout_seconds=120,
+                )
+            except Exception:
+                continue
 
 
 def _parse_bootstrap_status(output: str) -> dict[str, Any]:

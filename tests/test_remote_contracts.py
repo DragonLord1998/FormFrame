@@ -513,6 +513,32 @@ def test_workflow_bypasses_identity_lora_node_when_none_is_attached(tmp_path: Pa
     assert prompt["3"]["inputs"]["funmodels"] == ["2", 0]
 
 
+def test_comfy_submit_surfaces_workflow_validation_response(tmp_path: Path):
+    workflow_path = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "workflows"
+        / "controlled-character-v1.api.json"
+    )
+    bundle = _bundle(tmp_path / "plain.ffjob", "job_123456789abc")
+
+    def handler(_request: httpx.Request):
+        return httpx.Response(
+            400,
+            json={"error": {"message": "Unknown node LoadZImageModel"}},
+        )
+
+    client = ComfyClient("http://127.0.0.1:8188", workflow_path)
+    client.client.close()
+    client.client = httpx.Client(
+        base_url="http://127.0.0.1:8188",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ComfyError, match="Unknown node LoadZImageModel"):
+        client.submit(bundle)
+
+
 def test_reusable_asset_negotiation_uploads_only_gateway_misses(tmp_path: Path):
     bundle, missing_digest, cached_digest = _bundle_with_reference(
         tmp_path / "refs.ffjob",

@@ -59,7 +59,14 @@ class ComfyClient:
             "/prompt",
             json={"prompt": prompt, "client_id": f"formframe-{uuid4().hex}"},
         )
-        response.raise_for_status()
+        if response.is_error:
+            detail = response.text.strip()
+            if len(detail) > 4096:
+                detail = detail[-4096:]
+            raise ComfyError(
+                f"ComfyUI rejected the pinned workflow ({response.status_code}): "
+                f"{detail or 'no response body'}"
+            )
         payload = response.json()
         prompt_id = payload.get("prompt_id")
         if not isinstance(prompt_id, str) or not prompt_id:
