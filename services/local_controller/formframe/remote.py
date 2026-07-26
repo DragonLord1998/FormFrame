@@ -20,6 +20,8 @@ from .config import FormFrameSettings
 
 ProgressCallback = Callable[[str, str, int, str], None]
 BOOTSTRAP_MARKER = "FORMFRAME_BOOTSTRAP_JSON:"
+BOOTSTRAP_RUNNING_MARKER = "FORMFRAME_BOOTSTRAP_RUNNING:"
+BOOTSTRAP_FAILED_MARKER = "FORMFRAME_BOOTSTRAP_FAILED:"
 
 
 class RemoteRuntimeError(RuntimeError):
@@ -138,10 +140,7 @@ for value in (
             self.cli.upload(secrets, "/content/formframe/secrets/runtime.json")
             progress("restoring", "Restoring model cache", 44, "Installing pinned ComfyUI and model assets")
             bootstrap = self.repo_root / "backend" / "colab" / "bootstrap.py"
-            bootstrap_result = self.cli.exec_file(bootstrap, timeout_seconds=14400)
-        bootstrap_output = "\n".join(
-            part for part in (bootstrap_result.stdout, bootstrap_result.stderr) if part
-        )
+            bootstrap_output = self._run_remote_bootstrap(bootstrap, progress)
         self.last_bootstrap_output = bootstrap_output
         try:
             bootstrap_status = _parse_bootstrap_status(bootstrap_output)
@@ -170,6 +169,172 @@ for value in (
         if health.get("gpu") != "A100" or health.get("workflow") != "controlled-character-v1":
             raise RemoteRuntimeError("Remote gateway reported an incompatible runtime")
         return health
+
+    def _run_remote_bootstrap(
+        self,
+        bootstrap: Path,
+        progress: ProgressCallback,
+        *,
+        timeout_seconds: float = 14400,
+    ) -> str:
+        remote_script = "/content/formframe/bootstrap/bootstrap.py"
+        remote_log = "/content/formframe/logs/bootstrap.log"
+        remote_pid = "/content/formframe/state/bootstrap.pid"
+        remote_metadata = "/content/formframe/state/bootstrap-run.json"
+        bootstrap_sha256 = _sha256(bootstrap)
+        self.cli.upload(bootstrap, remote_script, timeout_seconds=180)
+        launcher = f"""
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+script = Path({remote_script!r})
+log = Path({remote_log!r})
+pid_path = Path({remote_pid!r})
+metadata_path = Path({remote_metadata!r})
+expected_sha256 = {bootstrap_sha256!r}
+expected_revision = {self.settings.github_revision!r}
+pid = 0
+owned = False
+if pid_path.is_file():
+    try:
+        pid = int(pid_path.read_text())
+        os.kill(pid, 0)
+        command = Path(f"/proc/{{pid}}/cmdline").read_bytes().replace(b"\\0", b" ").decode(
+            "utf-8",
+            errors="replace",
+        )
+        metadata = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {{}}
+        owned = (
+            str(script) in command
+            and metadata.get("pid") == pid
+            and metadata.get("bootstrap_sha256") == expected_sha256
+            and metadata.get("github_revision") == expected_revision
+            and metadata.get("script") == str(script)
+            and metadata.get("log") == str(log)
+        )
+    except (ValueError, OSError, ProcessLookupError):
+        pid = 0
+    except json.JSONDecodeError:
+        owned = False
+if owned:
+    print("FORMFRAME_BOOTSTRAP_LAUNCHED:reused")
+else:
+    if pid:
+        try:
+            command = Path(f"/proc/{{pid}}/cmdline").read_bytes().replace(b"\\0", b" ").decode(
+                "utf-8",
+                errors="replace",
+            )
+            if str(script) in command:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+    log.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("")
+    with log.open("ab", buffering=0) as stream:
+        process = subprocess.Popen(
+            [sys.executable, str(script)],
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    pid_path.write_text(str(process.pid))
+    metadata_path.write_text(json.dumps({{
+        "pid": process.pid,
+        "bootstrap_sha256": expected_sha256,
+        "github_revision": expected_revision,
+        "script": str(script),
+        "log": str(log),
+        "started_at": time.time(),
+    }}, sort_keys=True))
+    print("FORMFRAME_BOOTSTRAP_LAUNCHED:" + str(process.pid))
+"""
+        launched = self.cli.exec_source(
+            launcher,
+            "bootstrap_launch",
+            timeout_seconds=120,
+        )
+        launch_output = "\n".join(
+            part for part in (launched.stdout, launched.stderr) if part
+        )
+        if "FORMFRAME_BOOTSTRAP_LAUNCHED:" not in launch_output:
+            raise RemoteRuntimeError(
+                f"Colab did not launch the background bootstrap:\n{launch_output or 'no output'}"
+            )
+
+        poll_source = f"""
+import os
+from pathlib import Path
+
+log = Path({remote_log!r})
+pid_path = Path({remote_pid!r})
+text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+lines = text.splitlines()
+ready = next(
+    (line for line in reversed(lines) if line.startswith({BOOTSTRAP_MARKER!r})),
+    "",
+)
+if ready:
+    print(ready)
+else:
+    pid = 0
+    alive = False
+    try:
+        pid = int(pid_path.read_text())
+        os.kill(pid, 0)
+        alive = True
+    except (ValueError, OSError, ProcessLookupError):
+        pass
+    if alive:
+        print({BOOTSTRAP_RUNNING_MARKER!r} + str(len(text.encode("utf-8"))))
+        print("\\n".join(lines[-30:]))
+    else:
+        print({BOOTSTRAP_FAILED_MARKER!r} + str(pid))
+        print("\\n".join(lines[-160:]))
+"""
+        deadline = time.monotonic() + timeout_seconds
+        attempt = 0
+        while time.monotonic() < deadline:
+            polled = self.cli.exec_source(
+                poll_source,
+                "bootstrap_poll",
+                timeout_seconds=120,
+            )
+            output = "\n".join(
+                part for part in (polled.stdout, polled.stderr) if part
+            )
+            if BOOTSTRAP_MARKER in output:
+                return output
+            if BOOTSTRAP_FAILED_MARKER in output:
+                self.last_bootstrap_output = output
+                raise RemoteRuntimeError(
+                    f"Colab background bootstrap failed:\n{output[-32768:]}"
+                )
+            if BOOTSTRAP_RUNNING_MARKER not in output:
+                raise RemoteRuntimeError(
+                    f"Colab bootstrap poll returned an invalid response:\n{output or 'no output'}"
+                )
+            self.last_bootstrap_output = output
+            attempt += 1
+            if attempt == 1 or attempt % 6 == 0:
+                log_bytes = output.rsplit(BOOTSTRAP_RUNNING_MARKER, 1)[-1].splitlines()[0]
+                progress(
+                    "restoring",
+                    "Restoring model cache",
+                    min(88, 44 + attempt // 6),
+                    f"Remote bootstrap running; diagnostic log is {log_bytes} bytes",
+                )
+            time.sleep(10)
+        raise RemoteRuntimeError(
+            f"Colab background bootstrap timed out after {timeout_seconds:g}s; "
+            f"last remote output:\n{self.last_bootstrap_output[-32768:] or 'no output'}"
+        )
 
     def _write_source_cache_state(self) -> None:
         cache_root = self.remote_cache_dir / "bootstrap"
@@ -479,7 +644,7 @@ print("FORMFRAME_LORA_CACHE:verified")
                 self.last_bootstrap_output,
                 encoding="utf-8",
             )
-        for name in ("comfyui", "gateway", "cloudflared"):
+        for name in ("bootstrap", "comfyui", "gateway", "cloudflared"):
             try:
                 self.cli.download(
                     f"/content/formframe/logs/{name}.log",

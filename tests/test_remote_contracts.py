@@ -230,6 +230,177 @@ def test_remote_start_interrupt_stops_a100_created_by_that_start():
     assert runtime.cli.stop_calls == 1
 
 
+def test_remote_bootstrap_runs_in_background_and_is_polled(
+    monkeypatch,
+    tmp_path: Path,
+):
+    class FakeResult:
+        def __init__(self, stdout: str):
+            self.stdout = stdout
+            self.stderr = ""
+
+    class FakeCli:
+        def __init__(self):
+            self.polls = 0
+            self.uploads = []
+            self.sources = {}
+
+        def upload(self, source, destination, **_kwargs):
+            self.uploads.append((Path(source), destination))
+
+        def exec_source(self, source, label, **_kwargs):
+            self.sources[label] = source
+            if label == "bootstrap_launch":
+                return FakeResult("FORMFRAME_BOOTSTRAP_LAUNCHED:123")
+            self.polls += 1
+            if self.polls == 1:
+                return FakeResult("FORMFRAME_BOOTSTRAP_RUNNING:4096")
+            return FakeResult(
+                BOOTSTRAP_MARKER
+                + json.dumps({"status": "ready", "gateway_url": "https://x.trycloudflare.com"})
+            )
+
+    bootstrap = tmp_path / "bootstrap.py"
+    bootstrap.write_text("print('bootstrap')\n")
+    runtime = object.__new__(ColabRemoteRuntime)
+    runtime.cli = FakeCli()
+    runtime.settings = type(
+        "Settings",
+        (),
+        {"github_revision": "0" * 40},
+    )()
+    runtime.last_bootstrap_output = ""
+    progress_events = []
+    monkeypatch.setattr(
+        "services.local_controller.formframe.remote.time.sleep",
+        lambda _seconds: None,
+    )
+
+    output = runtime._run_remote_bootstrap(
+        bootstrap,
+        lambda *event: progress_events.append(event),
+        timeout_seconds=30,
+    )
+
+    assert BOOTSTRAP_MARKER in output
+    assert runtime.cli.uploads == [
+        (bootstrap, "/content/formframe/bootstrap/bootstrap.py")
+    ]
+    assert runtime.cli.polls == 2
+    assert progress_events[0][0] == "restoring"
+    assert "4096 bytes" in progress_events[0][3]
+    launcher = runtime.cli.sources["bootstrap_launch"]
+    assert "bootstrap-run.json" in launcher
+    assert hashlib.sha256(bootstrap.read_bytes()).hexdigest() in launcher
+    assert "0" * 40 in launcher
+    assert "/proc/{pid}/cmdline" in launcher
+
+
+def test_remote_bootstrap_poll_surfaces_remote_log_tail(
+    monkeypatch,
+    tmp_path: Path,
+):
+    class FakeResult:
+        stderr = ""
+
+        def __init__(self, stdout: str):
+            self.stdout = stdout
+
+    class FakeCli:
+        def upload(self, *_args, **_kwargs):
+            return None
+
+        def exec_source(self, _source, label, **_kwargs):
+            if label == "bootstrap_launch":
+                return FakeResult("FORMFRAME_BOOTSTRAP_LAUNCHED:123")
+            return FakeResult(
+                "FORMFRAME_BOOTSTRAP_FAILED:123\n"
+                "ComfyUI rejected the pinned workflow"
+            )
+
+    bootstrap = tmp_path / "bootstrap.py"
+    bootstrap.write_text("print('bootstrap')\n")
+    runtime = object.__new__(ColabRemoteRuntime)
+    runtime.cli = FakeCli()
+    runtime.settings = type(
+        "Settings",
+        (),
+        {"github_revision": "0" * 40},
+    )()
+    runtime.last_bootstrap_output = ""
+    monkeypatch.setattr(
+        "services.local_controller.formframe.remote.time.sleep",
+        lambda _seconds: None,
+    )
+
+    with pytest.raises(
+        RemoteRuntimeError,
+        match="ComfyUI rejected the pinned workflow",
+    ):
+        runtime._run_remote_bootstrap(
+            bootstrap,
+            lambda *_event: None,
+            timeout_seconds=30,
+        )
+
+    assert "FORMFRAME_BOOTSTRAP_FAILED" in runtime.last_bootstrap_output
+
+
+def test_remote_bootstrap_timeout_preserves_last_log_tail(
+    monkeypatch,
+    tmp_path: Path,
+):
+    class FakeResult:
+        stderr = ""
+
+        def __init__(self, stdout: str):
+            self.stdout = stdout
+
+    class FakeCli:
+        def upload(self, *_args, **_kwargs):
+            return None
+
+        def exec_source(self, _source, label, **_kwargs):
+            if label == "bootstrap_launch":
+                return FakeResult("FORMFRAME_BOOTSTRAP_LAUNCHED:123")
+            return FakeResult(
+                "FORMFRAME_BOOTSTRAP_RUNNING:8192\n"
+                "Downloading pinned Z-Image shard 4"
+            )
+
+    bootstrap = tmp_path / "bootstrap.py"
+    bootstrap.write_text("print('bootstrap')\n")
+    runtime = object.__new__(ColabRemoteRuntime)
+    runtime.cli = FakeCli()
+    runtime.last_bootstrap_output = ""
+    runtime.settings = type(
+        "Settings",
+        (),
+        {"github_revision": "0" * 40},
+    )()
+    clock = iter((0.0, 0.0, 31.0))
+    monkeypatch.setattr(
+        "services.local_controller.formframe.remote.time.monotonic",
+        lambda: next(clock),
+    )
+    monkeypatch.setattr(
+        "services.local_controller.formframe.remote.time.sleep",
+        lambda _seconds: None,
+    )
+
+    with pytest.raises(
+        RemoteRuntimeError,
+        match="Downloading pinned Z-Image shard 4",
+    ):
+        runtime._run_remote_bootstrap(
+            bootstrap,
+            lambda *_event: None,
+            timeout_seconds=30,
+        )
+
+    assert "Downloading pinned Z-Image shard 4" in runtime.last_bootstrap_output
+
+
 def test_colab_cli_redacts_token_flags():
     assert _redact("cloudflared run --token sensitive-value") == (
         "cloudflared run --token [REDACTED]"
