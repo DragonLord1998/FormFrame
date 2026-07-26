@@ -17,10 +17,11 @@ def main() -> int:
 
     settings = GatewaySettings.from_environment()
     bundle = Path(args.bundle).resolve()
-    validate_bundle(bundle, args.job_id)
+    workflow_path = settings.root / "workflows" / "controlled-character-v1.api.json"
+    validate_bundle(bundle, args.job_id, workflow_path)
     comfy = ComfyClient(
         settings.comfy_url,
-        settings.root / "workflows" / "controlled-character-v1.api.json",
+        workflow_path,
         settings.root / "ComfyUI" / "models" / "loras",
     )
     prompt_id = comfy.submit(bundle)

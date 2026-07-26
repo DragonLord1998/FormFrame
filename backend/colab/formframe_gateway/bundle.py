@@ -44,7 +44,11 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def validate_bundle(path: Path, expected_job_id: str) -> ValidatedBundle:
+def validate_bundle(
+    path: Path,
+    expected_job_id: str,
+    workflow_path: Path | None = None,
+) -> ValidatedBundle:
     if not path.is_file() or path.suffix != ".ffjob":
         raise ValueError("Remote bundle is missing or has the wrong extension")
     if path.stat().st_size > 64 * 1024 * 1024:
@@ -80,6 +84,16 @@ def validate_bundle(path: Path, expected_job_id: str) -> ValidatedBundle:
                 manifest["workflow_hash"],
             ):
                 raise ValueError("Manifest workflow hash is invalid")
+            pinned_workflow = workflow_path or (
+                Path(__file__).resolve().parents[3]
+                / "comfy"
+                / "workflows"
+                / "controlled-character-v1.api.json"
+            )
+            if not pinned_workflow.is_file():
+                raise ValueError("Pinned workflow is unavailable")
+            if manifest["workflow_hash"] != _sha256_bytes(pinned_workflow.read_bytes()):
+                raise ValueError("Manifest workflow hash does not match the pinned workflow")
             assets = manifest.get("assets")
             if not isinstance(assets, dict):
                 raise ValueError("Manifest assets must be an object")

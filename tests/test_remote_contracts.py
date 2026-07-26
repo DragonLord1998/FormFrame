@@ -12,7 +12,7 @@ import pytest
 
 from backend.colab import bootstrap
 from backend.colab.formframe_gateway.bundle import validate_bundle
-from backend.colab.formframe_gateway.comfy import ComfyClient
+from backend.colab.formframe_gateway.comfy import ComfyClient, ComfyError
 from bridge.cloudflare import CloudflareGateway, GatewayConfig, GatewayError
 from bridge.colab_cli import ColabCli, ColabCliConfig, ColabCliError, _redact, parse_probe, require_a100
 from bridge.runtime_package import RuntimeSecrets, build_runtime_archive, write_runtime_secrets
@@ -139,6 +139,7 @@ def _bundle(
     *,
     corrupt: bool = False,
     identity_lora: bytes | None = None,
+    workflow_hash: str | None = None,
 ) -> Path:
     workflow_path = (
         Path(__file__).resolve().parents[1]
@@ -155,7 +156,7 @@ def _bundle(
         "schema_version": 1,
         "job_id": job_id,
         "workflow": "controlled-character-v1",
-        "workflow_hash": hashlib.sha256(workflow_path.read_bytes()).hexdigest(),
+        "workflow_hash": workflow_hash or hashlib.sha256(workflow_path.read_bytes()).hexdigest(),
         "character_id": "character_test",
         "project_id": "project_test",
         "width": 768,
@@ -265,6 +266,13 @@ def test_gateway_bundle_validation_verifies_fixed_workflow_and_hashes(tmp_path: 
     assert validated.manifest["workflow"] == "controlled-character-v1"
     with pytest.raises(ValueError, match="pose hash mismatch"):
         validate_bundle(_bundle(tmp_path / "bad.ffjob", job_id, corrupt=True), job_id)
+    mismatched = _bundle(
+        tmp_path / "workflow-mismatch.ffjob",
+        job_id,
+        workflow_hash="0" * 64,
+    )
+    with pytest.raises(ValueError, match="does not match the pinned workflow"):
+        validate_bundle(mismatched, job_id)
 
 
 def test_trained_identity_lora_is_validated_and_patched_into_pinned_workflow(tmp_path: Path):
@@ -301,6 +309,31 @@ def test_trained_identity_lora_is_validated_and_patched_into_pinned_workflow(tmp
     assert prompt["7"]["inputs"]["lora_name"] == f"formframe_{digest}.safetensors"
     assert prompt["7"]["inputs"]["strength_model"] == 0.85
     assert prompt["3"]["inputs"]["funmodels"] == ["7", 0]
+
+
+def test_comfy_rehashes_identity_lora_even_when_stale_sidecar_matches(tmp_path: Path):
+    job_id = "job_123456789abc"
+    original = b"trained identity lora"
+    corrupt = b"corrupt identity lora"
+    assert len(original) == len(corrupt)
+    digest = hashlib.sha256(original).hexdigest()
+    bundle = _bundle(tmp_path / "identity.ffjob", job_id, identity_lora=original)
+    lora_root = tmp_path / "loras"
+    lora_root.mkdir()
+    lora_path = lora_root / f"formframe_{digest}.safetensors"
+    lora_path.write_bytes(corrupt)
+    lora_path.with_name(f"{lora_path.name}.sha256").write_text(digest + "\n")
+    workflow_path = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "workflows"
+        / "controlled-character-v1.api.json"
+    )
+    prompt = json.loads(workflow_path.read_text())["prompt"]
+    client = ComfyClient("http://127.0.0.1:8188", workflow_path, lora_root)
+
+    with pytest.raises(ComfyError, match="failed its SHA-256 check"):
+        client._configure_identity_lora(prompt, bundle)
 
 
 def test_workflow_bypasses_identity_lora_node_when_none_is_attached(tmp_path: Path):

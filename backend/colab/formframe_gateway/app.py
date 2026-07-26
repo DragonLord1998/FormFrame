@@ -220,7 +220,7 @@ async def _run(job_id: str, bundle: Path) -> None:
             job.progress = 10
             job.stage = "Validating immutable bundle"
             job.updated_at = utc_now()
-            await asyncio.to_thread(validate_bundle, bundle, job_id)
+            await asyncio.to_thread(validate_bundle, bundle, job_id, workflow_path)
             if job.status == "cancelled":
                 return
             job.status = "rendering"

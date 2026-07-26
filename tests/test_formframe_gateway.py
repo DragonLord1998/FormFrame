@@ -19,6 +19,10 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
 def _load_gateway(monkeypatch, tmp_path: Path, *, queue_size: int = 8):
+    workflows = tmp_path / "workflows"
+    workflows.mkdir(parents=True, exist_ok=True)
+    source_workflow = ROOT / "comfy" / "workflows" / "controlled-character-v1.api.json"
+    (workflows / source_workflow.name).write_bytes(source_workflow.read_bytes())
     monkeypatch.setenv("FORMFRAME_REMOTE_ROOT", str(tmp_path))
     monkeypatch.setenv("FORMFRAME_GATEWAY_DEVELOPMENT_TOKEN", TOKEN)
     monkeypatch.setenv("FORMFRAME_RUNTIME_ID", "runtime-test")
@@ -39,7 +43,9 @@ def _bundle(path: Path, job_id: str) -> Path:
         "schema_version": 1,
         "job_id": job_id,
         "workflow": "controlled-character-v1",
-        "workflow_hash": "0" * 64,
+        "workflow_hash": hashlib.sha256(
+            (ROOT / "comfy" / "workflows" / "controlled-character-v1.api.json").read_bytes()
+        ).hexdigest(),
         "character_id": "character_test",
         "project_id": "project_test",
         "width": 768,

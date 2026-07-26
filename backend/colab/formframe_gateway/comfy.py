@@ -105,12 +105,7 @@ class ComfyClient:
         path = (root / name).resolve()
         if path.parent != root or not path.is_file() or path.stat().st_size != expected_bytes:
             raise ComfyError("Pinned identity LoRA is missing from ComfyUI")
-        sidecar = path.with_name(f"{path.name}.sha256")
-        observed = (
-            sidecar.read_text(encoding="utf-8").strip()
-            if sidecar.is_file()
-            else _sha256(path)
-        )
+        observed = _sha256(path)
         if observed != digest:
             raise ComfyError("Pinned identity LoRA failed its SHA-256 check")
         controls = manifest.get("controls", {})

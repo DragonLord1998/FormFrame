@@ -325,15 +325,22 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
         remote_path = f"{remote_root}/{asset.path}"
         sidecar_path = f"{remote_path}.sha256"
         probe = f"""
+import hashlib
 from pathlib import Path
 path = Path({remote_path!r})
 sidecar = Path({sidecar_path!r})
+observed = ""
+if path.is_file() and path.stat().st_size == {asset.bytes}:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    observed = digest.hexdigest()
 hit = (
-    path.is_file()
-    and path.stat().st_size == {asset.bytes}
-    and sidecar.is_file()
-    and sidecar.read_text(encoding="utf-8").strip() == {asset.sha256!r}
+    observed == {asset.sha256!r}
 )
+if hit:
+    sidecar.write_text(observed + "\\n", encoding="utf-8")
 print("FORMFRAME_LORA_CACHE:" + ("hit" if hit else "miss"))
 """
         checked = self.cli.exec_source(
