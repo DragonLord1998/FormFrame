@@ -83,7 +83,7 @@ class ColabRemoteRuntime:
         _result, session_created = self.cli.ensure_a100_session_with_ownership()
         try:
             return self._start(progress)
-        except Exception as exc:
+        except BaseException as exc:
             if self.gateway is not None:
                 self.gateway.close()
             if not session_created:

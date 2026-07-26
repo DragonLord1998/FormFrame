@@ -198,6 +198,38 @@ def test_remote_start_failure_stops_only_a100_created_by_that_start(
     assert runtime.cli.stop_calls == expected_stop_calls
 
 
+def test_remote_start_interrupt_stops_a100_created_by_that_start():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    class FakeCli:
+        stop_calls = 0
+
+        def ensure_a100_session_with_ownership(self):
+            return FakeResult(), True
+
+        def stop(self):
+            self.stop_calls += 1
+            return FakeResult()
+
+    runtime = object.__new__(ColabRemoteRuntime)
+    runtime.cli = FakeCli()
+    runtime.gateway = None
+    runtime.settings = type(
+        "Settings",
+        (),
+        {"colab_session": "formframe-a100"},
+    )()
+    runtime._start = lambda _progress: (_ for _ in ()).throw(KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        runtime.start(lambda *_args: None)
+
+    assert runtime.cli.stop_calls == 1
+
+
 def test_colab_cli_redacts_token_flags():
     assert _redact("cloudflared run --token sensitive-value") == (
         "cloudflared run --token [REDACTED]"
@@ -872,6 +904,10 @@ def test_colab_bootstrap_works_without_ensurepip_on_current_runtime():
         / "bootstrap.py"
     ).read_text()
     assert '"--without-pip"' in source
+    assert 'os.environ.setdefault("HF_HUB_DISABLE_XET", "1")' in source
+    assert source.index('os.environ.setdefault("HF_HUB_DISABLE_XET", "1")') < (
+        source.index("from huggingface_hub import")
+    )
 
 
 def test_fixed_workflow_runs_pose_then_depth():

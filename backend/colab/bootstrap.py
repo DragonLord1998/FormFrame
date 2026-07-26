@@ -31,6 +31,12 @@ QUICK_TUNNEL_RE = re.compile(
     r"https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com"
 )
 CLOUDFLARED_VERSION = "2026.7.2"
+# Hugging Face's shared Xet worker can leave long-running Colab downloads stuck
+# without surfacing a terminal error. Use regular authenticated HTTP transfers
+# for deterministic bootstrap behavior; this must be set before hub imports.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
 CLOUDFLARED_ASSETS = {
     "amd64": (
         "cloudflared-linux-amd64",
