@@ -165,7 +165,16 @@ def clone_exact(repository: str, revision: str, destination: Path) -> None:
 def prepare_environment() -> Path:
     python = VENV / "bin" / "python"
     if not python.is_file():
-        run([sys.executable, "-m", "venv", "--system-site-packages", str(VENV)])
+        run(
+            [
+                sys.executable,
+                "-m",
+                "venv",
+                "--system-site-packages",
+                "--without-pip",
+                str(VENV),
+            ]
+        )
     run([str(python), "-m", "pip", "install", "--upgrade", "pip", "wheel"], timeout=900)
     return python
 

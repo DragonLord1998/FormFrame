@@ -137,7 +137,16 @@ for value in (
             progress("restoring", "Restoring model cache", 44, "Installing pinned ComfyUI and model assets")
             bootstrap = self.repo_root / "backend" / "colab" / "bootstrap.py"
             bootstrap_result = self.cli.exec_file(bootstrap, timeout_seconds=14400)
-        bootstrap_status = _parse_bootstrap_status(bootstrap_result.stdout)
+        bootstrap_output = "\n".join(
+            part for part in (bootstrap_result.stdout, bootstrap_result.stderr) if part
+        )
+        try:
+            bootstrap_status = _parse_bootstrap_status(bootstrap_output)
+        except RemoteRuntimeError as exc:
+            detail = "\n".join(bootstrap_output.splitlines()[-30:])
+            raise RemoteRuntimeError(
+                f"{exc}; Colab CLI bootstrap output:\n{detail or 'no output'}"
+            ) from exc
         if self.settings.cloudflare_tunnel_mode == "quick":
             self.gateway_url = _require_quick_tunnel_url(
                 str(bootstrap_status.get("gateway_url", ""))

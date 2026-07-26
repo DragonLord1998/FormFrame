@@ -864,6 +864,16 @@ def test_colab_bootstrap_does_not_install_or_upload_private_geometry():
     assert "smplx-models.zip" not in remote_source
 
 
+def test_colab_bootstrap_works_without_ensurepip_on_current_runtime():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "backend"
+        / "colab"
+        / "bootstrap.py"
+    ).read_text()
+    assert '"--without-pip"' in source
+
+
 def test_fixed_workflow_runs_pose_then_depth():
     path = Path(__file__).resolve().parents[1] / "comfy" / "workflows" / "controlled-character-v1.api.json"
     workflow = json.loads(path.read_text())
