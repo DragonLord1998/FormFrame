@@ -1,0 +1,142 @@
+{
+  "_formframe_workflow": "controlled-character-v1",
+  "prompt": {
+    "1": {
+      "class_type": "FormFrameJobLoader",
+      "inputs": {
+        "bundle_path": ""
+      }
+    },
+    "2": {
+      "class_type": "LoadZImageModel",
+      "inputs": {
+        "model": "Z-Image-Turbo",
+        "GPU_memory_mode": "model_full_load",
+        "precision": "bf16"
+      }
+    },
+    "3": {
+      "class_type": "LoadZImageControlNetInPipeline",
+      "inputs": {
+        "config": "z_image/z_image_control_2.1.yaml",
+        "model_name": "Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors",
+        "sub_transformer_name": "transformer",
+        "funmodels": [
+          "2",
+          0
+        ]
+      }
+    },
+    "4": {
+      "class_type": "ZImageControlSampler",
+      "inputs": {
+        "funmodels": [
+          "3",
+          0
+        ],
+        "prompt": [
+          "1",
+          3
+        ],
+        "negative_prompt": [
+          "1",
+          4
+        ],
+        "width": [
+          "1",
+          6
+        ],
+        "height": [
+          "1",
+          7
+        ],
+        "seed": [
+          "1",
+          5
+        ],
+        "steps": 8,
+        "cfg": 0,
+        "scheduler": "Flow",
+        "shift": 3,
+        "control_context_scale": [
+          "1",
+          9
+        ],
+        "control_image": [
+          "1",
+          2
+        ],
+        "inpaint_image": [
+          "1",
+          0
+        ],
+        "mask_image": [
+          "1",
+          10
+        ]
+      }
+    },
+    "5": {
+      "class_type": "ZImageControlSampler",
+      "inputs": {
+        "funmodels": [
+          "3",
+          0
+        ],
+        "prompt": [
+          "1",
+          3
+        ],
+        "negative_prompt": [
+          "1",
+          4
+        ],
+        "width": [
+          "1",
+          6
+        ],
+        "height": [
+          "1",
+          7
+        ],
+        "seed": [
+          "1",
+          5
+        ],
+        "steps": 8,
+        "cfg": 0,
+        "scheduler": "Flow",
+        "shift": 3,
+        "control_context_scale": [
+          "1",
+          8
+        ],
+        "control_image": [
+          "1",
+          1
+        ],
+        "inpaint_image": [
+          "4",
+          0
+        ],
+        "mask_image": [
+          "1",
+          10
+        ]
+      }
+    },
+    "6": {
+      "class_type": "FormFrameResultSaver",
+      "inputs": {
+        "images": [
+          "5",
+          0
+        ],
+        "job_metadata": [
+          "1",
+          11
+        ]
+      }
+    }
+  }
+}

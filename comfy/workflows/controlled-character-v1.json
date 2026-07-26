@@ -1,0 +1,25 @@
+{
+  "formframe_workflow": "controlled-character-v1",
+  "immutable": true,
+  "status": "adapter-template",
+  "description": "Pinned workflow contract. Replace adapter-template nodes only when the production model stack is selected, then release as a new workflow version.",
+  "inputs": [
+    "rgb",
+    "depth",
+    "pose",
+    "references",
+    "prompt",
+    "negative_prompt",
+    "seed",
+    "denoise",
+    "depth_strength",
+    "pose_strength",
+    "reference_strength"
+  ],
+  "outputs": [
+    "preview_webp",
+    "final_png",
+    "result_json"
+  ]
+}
+

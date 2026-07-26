@@ -1,0 +1,2 @@
+"""Local controller service."""
+

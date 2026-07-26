@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "comfyui": {
+    "repository": "https://github.com/Comfy-Org/ComfyUI.git",
+    "revision": "806e092ed42772e4ce7abf44c97c50021cc4bd10"
+  },
+  "videox_fun": {
+    "repository": "https://github.com/aigc-apps/VideoX-Fun.git",
+    "revision": "248ab0ac0ebc48f0b4ae43ceb2d7ded24cc907bb"
+  },
+  "z_image_turbo": {
+    "repository": "Tongyi-MAI/Z-Image-Turbo",
+    "revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+    "destination": "models/Fun_Models/Z-Image-Turbo",
+    "required_files": [
+      "model_index.json",
+      "transformer/config.json",
+      "text_encoder/config.json",
+      "vae/config.json"
+    ]
+  },
+  "controlnet": {
+    "repository": "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1",
+    "revision": "5155fc56d17821007d6f62ac192c09e0f0e72016",
+    "filename": "Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors",
+    "destination": "models/model_patches/Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors",
+    "sha256": "d1251cc7bc3486bc61d25c3be498ef394c31c85ddf4ee9137d2e933411f4a689"
+  },
+  "gnm": {
+    "repository": "https://github.com/google/gnm.git",
+    "revision": "8294570e208cf55c4710d13c1c269d523524f591",
+    "asset": "gnm/shape/data/versions/v3_0/gnm_head.npz"
+  },
+  "smplx": {
+    "package": "smplx",
+    "model_files": [
+      "SMPLX_NEUTRAL.npz",
+      "SMPLX_NEUTRAL.pkl"
+    ],
+    "redistribute": false
+  },
+  "cache": {
+    "local_mac_scope": "source-revision and model-manifest metadata only",
+    "remote_root": "/content/formframe/cache",
+    "integrity_state": "/content/formframe/state/model-integrity.json",
+    "source_checkout": "/content/formframe/source",
+    "rehydration": "Colab bootstrap clones the pinned GitHub commit and restores model assets into the active Colab session"
+  }
+}
