@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, Response
 
 from .auth import AccessVerifier
-from .bundle import validate_bundle
+from .bundle import sha256_path, validate_bundle
 from .comfy import ComfyClient
 from .models import AssetCheck, JobSubmission, RemoteJob, utc_now
 from .settings import GatewaySettings
@@ -156,7 +156,12 @@ async def check_assets(payload: AssetCheck, _: dict = Depends(auth.dependency)):
     missing = []
     for value in payload.hashes:
         digest = _require_sha256(value)
-        if not _asset_path(digest).is_file():
+        path = _asset_path(digest)
+        if not path.is_file():
+            missing.append(digest)
+            continue
+        observed = await asyncio.to_thread(sha256_path, path)
+        if not hmac.compare_digest(observed, digest):
             missing.append(digest)
     return {"missing": missing}
 
@@ -220,7 +225,13 @@ async def _run(job_id: str, bundle: Path) -> None:
             job.progress = 10
             job.stage = "Validating immutable bundle"
             job.updated_at = utc_now()
-            await asyncio.to_thread(validate_bundle, bundle, job_id, workflow_path)
+            await asyncio.to_thread(
+                validate_bundle,
+                bundle,
+                job_id,
+                workflow_path,
+                settings.root / "assets",
+            )
             if job.status == "cancelled":
                 return
             job.status = "rendering"

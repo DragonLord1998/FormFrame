@@ -69,6 +69,9 @@ python scripts/create-comparison-matrix.py --manifest path/to/jobs/<job_id>/mani
   LoRAs, with trigger-token and strength controls saved per character
 - Conditioning Contract v1 asset generation
 - Local RGB/depth/pose/optional-normal conditioning contact-sheet validation
+- Three-pose real-model validation via `python scripts/validate-local-poses.py`,
+  which saves RGB, depth, pose, contact-sheet, and hash evidence under the
+  ignored local `data/validation/real-geometry-poses` directory
 - Pending A-F comparison-matrix scaffold for later live A100 benchmark evidence
 - Content hashes and ZIP-storage `.ffjob` bundles
 - Immutable `controlled-character-v1` workflow identifier
@@ -101,6 +104,9 @@ contract and never accepts shell commands or arbitrary ComfyUI JSON.
 
 Reusable reference assets are negotiated by SHA-256 through the private gateway
 and uploaded through Colab CLI only when the active Colab cache is missing them.
+After that staging step, the uploaded `.ffjob` omits the reference bytes while
+preserving their immutable manifest entries; the gateway and ComfyUI job loader
+rehash the corresponding remote cache files before accepting the render.
 An attached trained identity LoRA remains in the Mac content-addressed asset
 store, is hash-pinned in the job manifest without entering the `.ffjob`, and is
 uploaded directly into ComfyUI through Colab CLI. Cloudflare carries only its

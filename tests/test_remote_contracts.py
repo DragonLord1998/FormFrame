@@ -21,6 +21,7 @@ from services.local_controller.formframe.remote import (
     ColabRemoteRuntime,
     ReusableAsset,
     _cli_fallback_source,
+    _bundle_without_reusable_assets,
     _identity_lora_asset,
     _reusable_assets,
 )
@@ -202,6 +203,12 @@ def _bundle(
 
 
 def _bundle_with_reference(path: Path, job_id: str) -> tuple[Path, str, str]:
+    workflow_path = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "workflows"
+        / "controlled-character-v1.api.json"
+    )
     files = {
         "rgb.webp": b"rgb",
         "depth.png": b"depth",
@@ -215,7 +222,7 @@ def _bundle_with_reference(path: Path, job_id: str) -> tuple[Path, str, str]:
         "schema_version": 1,
         "job_id": job_id,
         "workflow": "controlled-character-v1",
-        "workflow_hash": "0" * 64,
+        "workflow_hash": hashlib.sha256(workflow_path.read_bytes()).hexdigest(),
         "character_id": "character_test",
         "project_id": "project_test",
         "width": 768,
@@ -380,6 +387,69 @@ def test_reusable_asset_negotiation_uploads_only_gateway_misses(tmp_path: Path):
     assert plan["missing_count"] == 1
     assert plan["uploaded_count"] == 1
     assert runtime.cli.uploads == [(b"reference image", f"/content/formframe/assets/{missing_digest}")]
+
+
+def test_remote_bundle_omits_reusable_references_after_hash_staging(tmp_path: Path):
+    bundle, missing_digest, cached_digest = _bundle_with_reference(
+        tmp_path / "refs.ffjob",
+        "job_123456789abc",
+    )
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    optimized = _bundle_without_reusable_assets(
+        bundle,
+        _reusable_assets(bundle),
+        job_dir,
+    )
+
+    with zipfile.ZipFile(bundle) as source, zipfile.ZipFile(optimized) as remote:
+        assert {
+            f"ref_face_front_{missing_digest[:12]}.webp",
+            f"ref_outfit_{cached_digest[:12]}.webp",
+        } <= set(source.namelist())
+        assert not any(name.startswith("ref_") for name in remote.namelist())
+        assert json.loads(remote.read("manifest.json")) == json.loads(
+            source.read("manifest.json")
+        )
+
+
+def test_gateway_validates_omitted_reference_against_remote_hash_cache(tmp_path: Path):
+    bundle, missing_digest, _cached_digest = _bundle_with_reference(
+        tmp_path / "refs.ffjob",
+        "job_123456789abc",
+    )
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    assets = _reusable_assets(bundle)
+    optimized = _bundle_without_reusable_assets(bundle, assets, job_dir)
+    asset_root = tmp_path / "assets"
+    asset_root.mkdir()
+    with zipfile.ZipFile(bundle) as archive:
+        for asset in assets:
+            (asset_root / asset.sha256).write_bytes(archive.read(asset.path))
+    workflow_path = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "workflows"
+        / "controlled-character-v1.api.json"
+    )
+
+    validated = validate_bundle(
+        optimized,
+        "job_123456789abc",
+        workflow_path,
+        asset_root,
+    )
+
+    assert validated.manifest["assets"]["references"][0]["sha256"] == missing_digest
+    (asset_root / missing_digest).write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="reference hash mismatch"):
+        validate_bundle(
+            optimized,
+            "job_123456789abc",
+            workflow_path,
+            asset_root,
+        )
 
 
 def test_identity_lora_uses_cli_bulk_transfer_and_remote_hash_cache(tmp_path: Path):

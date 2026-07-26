@@ -211,7 +211,10 @@ def _orthonormal_head_frame(joints: np.ndarray) -> tuple[np.ndarray, np.ndarray,
     right = joints[BODY_JOINT["right_shoulder"]]
     y_axis = head - neck
     y_axis /= max(float(np.linalg.norm(y_axis)), 1e-8)
-    x_axis = right - left
+    # GNM and SMPL-X both use subject-left as +X. Using right-left here rotates
+    # the head 180 degrees around Y and presents the back of the GNM head to the
+    # default +Z camera.
+    x_axis = left - right
     x_axis -= y_axis * float(np.dot(x_axis, y_axis))
     x_axis /= max(float(np.linalg.norm(x_axis)), 1e-8)
     z_axis = np.cross(x_axis, y_axis)
@@ -358,8 +361,18 @@ def _trim_smplx_head(
     head = joints[BODY_JOINT["head"]]
     axis = _normalize(head - neck)
     centroids = vertices[faces].mean(axis=1)
-    along_neck = (centroids - neck) @ axis
-    return faces[along_neck <= float(np.linalg.norm(head - neck)) * 0.48]
+    delta = centroids - neck
+    along_neck = delta @ axis
+    radial_distance = np.linalg.norm(
+        delta - along_neck[:, None] * axis[None, :],
+        axis=1,
+    )
+    neck_head = float(np.linalg.norm(head - neck))
+    head_region = (
+        (along_neck > neck_head * 0.48)
+        & (radial_distance < neck_head * 1.6)
+    )
+    return faces[~head_region]
 
 
 def _ellipsoid_mesh(
@@ -368,13 +381,25 @@ def _ellipsoid_mesh(
     rotation: np.ndarray,
     scale: tuple[float, float, float],
     minimum_local_y: float = -1.0,
+    front_opening_y: float | None = None,
 ):
-    mesh = trimesh.creation.icosphere(subdivisions=2, radius=1.0)
+    mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
     local_vertices = np.asarray(mesh.vertices)
+    faces = np.asarray(mesh.faces)
+    keep_faces = np.ones(len(faces), dtype=bool)
     if minimum_local_y > -1.0:
-        mesh.update_faces(
-            np.all(local_vertices[np.asarray(mesh.faces)][:, :, 1] >= minimum_local_y, axis=1)
+        keep_faces &= np.all(
+            local_vertices[faces][:, :, 1] >= minimum_local_y,
+            axis=1,
         )
+    if front_opening_y is not None:
+        centroids = local_vertices[faces].mean(axis=1)
+        keep_faces &= ~(
+            (centroids[:, 2] > 0)
+            & (centroids[:, 1] < front_opening_y)
+        )
+    if not np.all(keep_faces):
+        mesh.update_faces(keep_faces)
         mesh.remove_unreferenced_vertices()
         local_vertices = np.asarray(mesh.vertices)
     mesh.vertices = (local_vertices * np.asarray(scale)) @ rotation.T + center
@@ -387,7 +412,7 @@ def _appearance_proxy_meshes(trimesh, project: dict[str, Any], joints: np.ndarra
     y_axis = rotation[:, 1]
     z_axis = rotation[:, 2]
     hair_profiles = {
-        "hair_proxy_sculpted_crop": ((1.08, 0.62, 1.0), 0.58, 0.0, -0.2),
+        "hair_proxy_sculpted_crop": ((1.1, 0.68, 1.05), 0.72, -0.1, -0.15),
         "hair_proxy_soft_bob": ((1.2, 1.12, 1.08), 0.18, 0.0, -0.82),
         "hair_proxy_pulled_back": ((1.02, 0.56, 0.96), 0.6, 0.22, -0.18),
     }
@@ -397,10 +422,11 @@ def _appearance_proxy_meshes(trimesh, project: dict[str, Any], joints: np.ndarra
     )
     hair = _ellipsoid_mesh(
         trimesh,
-        head + y_axis * neck_head * hair_y + z_axis * neck_head * hair_back,
+        head + y_axis * neck_head * hair_y - z_axis * neck_head * hair_back,
         rotation,
         tuple(neck_head * value for value in hair_scale),
         hair_min_y,
+        front_opening_y=0.42,
     )
     hair.visual.vertex_colors = (42, 33, 30, 255)
 
@@ -472,7 +498,10 @@ def _render_conditioning(
     rgb_draw = ImageDraw.Draw(rgb)
     depth_draw = ImageDraw.Draw(depth_image)
     position, _, _, _, _ = _camera_frame(project)
-    light_direction = _normalize(np.asarray([-0.65, 1.0, -0.5], dtype=np.float32))
+    # The canonical GNM/SMPL-X front faces +Z and the default camera sits on
+    # +Z. Light from the camera side so facial planes remain legible in the RGB
+    # guide instead of collapsing to one flat shadow value.
+    light_direction = _normalize(np.asarray([-0.65, 1.0, 0.75], dtype=np.float32))
     projected_meshes = []
     all_depths = []
     for vertices, faces, color in meshes:

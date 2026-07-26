@@ -134,8 +134,12 @@ def test_smplx_dense_vector_defaults_and_control_counts_are_explicit():
 def test_gnm_expression_studio_exposes_full_advanced_coefficient_surface():
     modal = (ROOT / "apps/mac-ui/src/lib/ExpressionStudio.svelte").read_text()
 
-    assert "{ length: 253 }" in modal
-    assert "identity_basis_${String(index).padStart(3, \"0\")}" in modal
+    assert "{ length: 170 }" in modal
+    assert "{ length: 80 }" in modal
+    assert "{ length: 3 }" in modal
+    assert "head_${String(index).padStart(3, \"0\")}" in modal
+    assert "teeth_${String(index).padStart(3, \"0\")}" in modal
+    assert "eyes_${String(index).padStart(3, \"0\")}" in modal
     assert "{ length: 100 }, (_, index) => `left_eye_region_${String(index).padStart(3, \"0\")}`" in modal
     assert "{ length: 100 }, (_, index) => `right_eye_region_${String(index).padStart(3, \"0\")}`" in modal
     assert "{ length: 150 }, (_, index) => `lower_face_region_${String(index).padStart(3, \"0\")}`" in modal

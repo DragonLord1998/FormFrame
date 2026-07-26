@@ -197,6 +197,16 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
         progress(62, "Negotiating reusable assets")
         reusable_assets = _reusable_assets(bundle_path)
         transfer_plan = self._stage_reusable_assets(bundle_path, reusable_assets)
+        upload_bundle = _bundle_without_reusable_assets(
+            bundle_path,
+            reusable_assets,
+            local_job_dir,
+        )
+        transfer_plan["job_bundle"] = {
+            "source_bytes": bundle_path.stat().st_size,
+            "uploaded_bytes": upload_bundle.stat().st_size,
+            "omitted_reusable_assets": len(reusable_assets),
+        }
         identity_lora = _identity_lora_asset(bundle_path)
         if identity_lora:
             progress(64, "Staging trained identity LoRA")
@@ -205,7 +215,7 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
                 local_job_dir,
             )
         progress(66, "Uploading immutable .ffjob with Colab CLI")
-        self.cli.upload(bundle_path, remote_bundle)
+        self.cli.upload(upload_bundle, remote_bundle)
         used_fallback = False
         try:
             progress(70, "Submitting metadata through Cloudflare")
@@ -451,6 +461,27 @@ def _identity_lora_asset(bundle_path: Path) -> ReusableAsset | None:
     ):
         raise RemoteRuntimeError("Identity LoRA manifest metadata is invalid")
     return ReusableAsset(path=path, sha256=digest, bytes=byte_count)
+
+
+def _bundle_without_reusable_assets(
+    bundle_path: Path,
+    assets: list[ReusableAsset],
+    local_job_dir: Path,
+) -> Path:
+    omitted = {asset.path for asset in assets}
+    if not omitted:
+        return bundle_path
+    destination = local_job_dir / f"{bundle_path.stem}.remote.ffjob"
+    with zipfile.ZipFile(bundle_path) as source, zipfile.ZipFile(
+        destination,
+        "w",
+        compression=zipfile.ZIP_STORED,
+    ) as target:
+        for item in source.infolist():
+            if item.filename in omitted:
+                continue
+            target.writestr(item, source.read(item.filename))
+    return destination
 
 
 def _cli_fallback_source(job_id: str, remote_bundle: str) -> str:

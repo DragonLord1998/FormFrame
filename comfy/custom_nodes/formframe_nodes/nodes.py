@@ -81,15 +81,23 @@ class FormFrameJobLoader:
                     raise ValueError(f"{key} conditioning hash mismatch")
             for reference in manifest["assets"].get("references", []):
                 name = str(reference.get("path", ""))
+                expected = str(reference.get("sha256", ""))
                 if (
                     not name.startswith("ref_")
                     or not name.endswith(".webp")
                     or Path(name).name != name
-                    or name not in names
                 ):
                     raise ValueError("Reference asset path is invalid")
-                digest = hashlib.sha256(archive.read(name)).hexdigest()
-                if digest != reference.get("sha256"):
+                if name in names:
+                    content = archive.read(name)
+                    digest = hashlib.sha256(content).hexdigest()
+                else:
+                    cache_root = (REMOTE_ROOT / "assets").resolve()
+                    cached = (cache_root / expected).resolve()
+                    if cached.parent != cache_root or not cached.is_file():
+                        raise ValueError("Cached reference asset is missing")
+                    digest = hashlib.sha256(cached.read_bytes()).hexdigest()
+                if digest != expected:
                     raise ValueError("Reference asset hash mismatch")
             controls = manifest["controls"]
             # VideoX-Fun expects an IMAGE mask and binarizes it internally.

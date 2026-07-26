@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import json
 import subprocess
@@ -13,6 +14,18 @@ from .config import FormFrameSettings
 from .models import Project
 
 Point2D = Tuple[float, float]
+
+
+def geometry_cache_digest(project: Project, worker_sha256: str) -> str:
+    key = json.dumps(
+        {
+            "project": project.model_dump(mode="json", exclude={"updated_at"}),
+            "worker_sha256": worker_sha256,
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(key.encode()).hexdigest()[:20]
 
 
 class GeometryProvider(ABC):
@@ -107,12 +120,10 @@ class GnmSmplxGeometry(GeometryProvider):
         self.cache_root = cache_root
         self.python = python or Path(sys.executable)
         self.worker = Path(__file__).resolve().parents[2] / "geometry_worker" / "main.py"
+        self.worker_sha256 = hashlib.sha256(self.worker.read_bytes()).hexdigest()
 
     def evaluate(self, project: Project) -> dict[str, object]:
-        key = project.model_dump_json(exclude={"updated_at"})
-        import hashlib
-
-        digest = hashlib.sha256(key.encode()).hexdigest()[:20]
+        digest = geometry_cache_digest(project, self.worker_sha256)
         output_dir = self.cache_root / digest
         result_path = output_dir / "geometry.json"
         if result_path.is_file():

@@ -121,6 +121,13 @@ def test_gateway_health_and_content_addressed_assets(tmp_path: Path, monkeypatch
     assert response.json() == {"sha256": digest, "bytes": len(content)}
     assert client.post("/v1/assets/check", json={"hashes": [digest]}, headers=AUTH).json() == {"missing": []}
 
+    (tmp_path / "assets" / digest).write_bytes(b"corrupt partial upload")
+    assert client.post(
+        "/v1/assets/check",
+        json={"hashes": [digest]},
+        headers=AUTH,
+    ).json() == {"missing": [digest]}
+
 
 def test_gateway_queue_limit_cancel_interrupt_and_result_endpoint(tmp_path: Path, monkeypatch):
     gateway = _load_gateway(monkeypatch, tmp_path, queue_size=1)

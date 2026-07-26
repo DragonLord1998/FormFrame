@@ -65,12 +65,16 @@ CLI: bootstrap secrets, `.ffjob` bundles, reusable asset-cache misses, and final
 PNG downloads. Trained identity LoRAs also use Colab CLI and are cached inside
 the active ComfyUI `models/loras` directory by SHA-256; Cloudflare sees only
 their controlled manifest metadata. Licensed GNM and SMPL-X files remain local;
-Colab receives only their derived conditioning images. Cloudflare carries authenticated control,
-status/progress, preview delivery, benchmark echo checks, and content-addressed
-cache checks. GitHub is the source of truth for runtime code; credentials are
-passed only through runtime secrets/environment. The local Mac cache records
-source-revision and model-manifest integrity metadata; it does not mirror model
-weights locally.
+Colab receives only their derived conditioning images. Once reusable reference
+assets have been staged by hash, the per-render `.ffjob` uploaded through the
+CLI omits their bytes. The immutable manifest still names every reference, and
+both the gateway validator and the ComfyUI job loader rehash the corresponding
+`assets/<sha256>` cache entry before execution. Cloudflare carries authenticated
+control, status/progress, preview delivery, benchmark echo checks, and
+content-addressed cache checks. GitHub is the source of truth for runtime code;
+credentials are passed only through runtime secrets/environment. The local Mac
+cache records source-revision and model-manifest integrity metadata; it does not
+mirror model weights locally.
 
 ## Project persistence
 

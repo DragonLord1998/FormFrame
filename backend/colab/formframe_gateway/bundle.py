@@ -44,10 +44,19 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def validate_bundle(
     path: Path,
     expected_job_id: str,
     workflow_path: Path | None = None,
+    asset_root: Path | None = None,
 ) -> ValidatedBundle:
     if not path.is_file() or path.suffix != ".ffjob":
         raise ValueError("Remote bundle is missing or has the wrong extension")
@@ -117,9 +126,20 @@ def validate_bundle(
                 name = reference.get("path")
                 if not isinstance(name, str) or not REFERENCE_FILE.fullmatch(name):
                     raise ValueError("Manifest reference path is invalid")
-                if name not in names:
-                    raise ValueError("Manifest reference file is missing")
-                if _sha256_bytes(archive.read(name)) != reference.get("sha256"):
+                digest = reference.get("sha256")
+                if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+                    raise ValueError("Manifest reference hash is invalid")
+                if name in names:
+                    observed = _sha256_bytes(archive.read(name))
+                else:
+                    if asset_root is None:
+                        raise ValueError("Manifest reference file is missing")
+                    root = asset_root.resolve()
+                    cached = (root / digest).resolve()
+                    if cached.parent != root or not cached.is_file():
+                        raise ValueError("Manifest cached reference file is missing")
+                    observed = sha256_path(cached)
+                if observed != digest:
                     raise ValueError("Manifest reference hash mismatch")
             identity_lora = assets.get("identity_lora")
             controls = manifest.get("controls")

@@ -20,10 +20,11 @@
   const axisNames = ["x", "y", "z"];
   const gnmJointNames = ["neck", "head", "left_eye", "right_eye"];
   const lockedGnmJoints = new Set(["neck", "head"]);
-  const identityCoefficientNames = Array.from(
-    { length: 253 },
-    (_, index) => `identity_basis_${String(index).padStart(3, "0")}`
-  );
+  const identityCoefficientNames = [
+    ...Array.from({ length: 170 }, (_, index) => `head_${String(index).padStart(3, "0")}`),
+    ...Array.from({ length: 80 }, (_, index) => `teeth_${String(index).padStart(3, "0")}`),
+    ...Array.from({ length: 3 }, (_, index) => `eyes_${String(index).padStart(3, "0")}`)
+  ];
   const expressionCoefficientNames = [
     ...Array.from({ length: 100 }, (_, index) => `left_eye_region_${String(index).padStart(3, "0")}`),
     ...Array.from({ length: 100 }, (_, index) => `right_eye_region_${String(index).padStart(3, "0")}`),

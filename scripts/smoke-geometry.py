@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 from services.local_controller.formframe.config import FormFrameSettings
 from services.local_controller.formframe.geometry import GnmSmplxGeometry
@@ -9,11 +13,10 @@ from services.local_controller.formframe.models import Project
 
 
 def main() -> int:
-    root = Path(__file__).resolve().parents[1]
     settings = FormFrameSettings.from_environment()
     geometry = GnmSmplxGeometry(
         settings,
-        root / "data" / "smoke-geometry",
+        REPO_ROOT / "data" / "smoke-geometry",
         settings.geometry_python,
     )
     project = Project(name="GNM + SMPL-X smoke")

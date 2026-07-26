@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from services.local_controller.formframe.geometry import ProceduralGuideGeometry, UnconfiguredModelGeometry
+from services.local_controller.formframe.geometry import (
+    ProceduralGuideGeometry,
+    UnconfiguredModelGeometry,
+    geometry_cache_digest,
+)
 from services.local_controller.formframe.models import Project
 
 
@@ -18,6 +22,14 @@ def test_geometry_provider_is_deterministic_and_fail_closed():
     assert {"head", "neck", "left_wrist", "right_wrist", "left_ankle", "right_ankle"} <= first.keys()
     with pytest.raises(RuntimeError, match="not configured"):
         UnconfiguredModelGeometry().projected_joints(project, 768, 1024)
+
+
+def test_geometry_cache_is_invalidated_when_worker_source_changes():
+    project = Project()
+    assert geometry_cache_digest(project, "worker-a") != geometry_cache_digest(
+        project,
+        "worker-b",
+    )
 
 
 def test_full_gnm_and_smplx_coefficient_vectors_reach_geometry_math():
@@ -239,6 +251,75 @@ print(json.dumps({
     assert result["garment_vertices"] == 8
     assert result["hair_height"] > 0.4
     assert result["garment_width"] > 0.7
+
+
+def test_head_alignment_preserves_gnm_front_facing_direction():
+    worker_python = Path("data/geometry-venv/bin/python")
+    if not worker_python.is_file():
+        pytest.skip("isolated geometry environment is not installed")
+    script = r"""
+import json
+
+import numpy as np
+
+from services.geometry_worker.main import BODY_JOINT, _orthonormal_head_frame
+
+joints = np.zeros((22, 3), dtype=np.float32)
+joints[BODY_JOINT["neck"]] = (0, 1.6, 0)
+joints[BODY_JOINT["head"]] = (0, 1.8, 0)
+joints[BODY_JOINT["left_shoulder"]] = (0.3, 1.5, 0)
+joints[BODY_JOINT["right_shoulder"]] = (-0.3, 1.5, 0)
+_, rotation, _ = _orthonormal_head_frame(joints)
+print(json.dumps({
+    "local_left": rotation[:, 0].tolist(),
+    "local_up": rotation[:, 1].tolist(),
+    "local_front": rotation[:, 2].tolist(),
+    "determinant": float(np.linalg.det(rotation)),
+}))
+"""
+    completed = subprocess.run(
+        [str(worker_python), "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["local_left"] == pytest.approx([1, 0, 0])
+    assert result["local_up"] == pytest.approx([0, 1, 0])
+    assert result["local_front"] == pytest.approx([0, 0, 1])
+    assert result["determinant"] == pytest.approx(1)
+
+
+def test_smplx_head_trim_does_not_delete_raised_limbs():
+    worker_python = Path("data/geometry-venv/bin/python")
+    if not worker_python.is_file():
+        pytest.skip("isolated geometry environment is not installed")
+    script = r"""
+import json
+
+import numpy as np
+
+from services.geometry_worker.main import BODY_JOINT, _trim_smplx_head
+
+joints = np.zeros((22, 3), dtype=np.float32)
+joints[BODY_JOINT["neck"]] = (0, 1.5, 0)
+joints[BODY_JOINT["head"]] = (0, 1.7, 0)
+vertices = np.asarray([
+    [-0.05, 1.67, 0], [0.05, 1.67, 0], [0, 1.8, 0],
+    [0.8, 1.72, 0], [0.9, 1.72, 0], [0.85, 1.85, 0],
+], dtype=np.float32)
+faces = np.asarray([[0, 1, 2], [3, 4, 5]], dtype=np.int64)
+kept = _trim_smplx_head(vertices, faces, joints)
+print(json.dumps({"kept": kept.tolist()}))
+"""
+    completed = subprocess.run(
+        [str(worker_python), "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["kept"] == [[3, 4, 5]]
 
 
 def test_body_feature_controls_modify_real_geometry_coordinates():

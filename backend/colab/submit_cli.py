@@ -18,7 +18,7 @@ def main() -> int:
     settings = GatewaySettings.from_environment()
     bundle = Path(args.bundle).resolve()
     workflow_path = settings.root / "workflows" / "controlled-character-v1.api.json"
-    validate_bundle(bundle, args.job_id, workflow_path)
+    validate_bundle(bundle, args.job_id, workflow_path, settings.root / "assets")
     comfy = ComfyClient(
         settings.comfy_url,
         workflow_path,
