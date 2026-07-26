@@ -46,6 +46,50 @@ def test_character_library_controls_are_first_class_project_state():
     assert "...outfitLibrary[name]" in inspector
 
 
+def test_identity_lora_attachment_is_explicit_project_state():
+    app = (ROOT / "apps/mac-ui/src/App.svelte").read_text()
+    inspector = (ROOT / "apps/mac-ui/src/lib/Inspector.svelte").read_text()
+    api = (ROOT / "apps/mac-ui/src/lib/api.js").read_text()
+    project = (ROOT / "apps/mac-ui/src/lib/project.js").read_text()
+
+    assert "identity_lora: null" in project
+    assert "const normalizeIdentityLora" in project
+    assert "identity_lora: normalizeIdentityLora(project?.character?.identity_lora)" in project
+    assert 'trigger_token: value.trigger_token || "ff_identity"' in project
+    assert "strength: Number.isFinite(strength) ? strength : 0.75" in project
+    assert "uploadIdentityLora" in api
+    assert "/identity-lora" in api
+    assert "removeIdentityLora" in api
+    assert "let uploadingIdentityLora = false" in app
+    assert "normalizeProject(await api.uploadIdentityLora" in app
+    assert "normalizeProject(await api.removeIdentityLora" in app
+    assert "onIdentityLora={attachIdentityLora}" in app
+    assert "onRemoveIdentityLora={removeIdentityLora}" in app
+    assert "Identity LoRA" in inspector
+    assert ".safetensors only" in inspector
+    assert "accept=\".safetensors,application/octet-stream\"" in inspector
+    assert "bind:value={project.character.identity_lora.trigger_token}" in inspector
+    assert "bind:value={project.character.identity_lora.strength}" in inspector
+
+
+def test_backend_button_can_stop_ready_a100_without_interrupting_active_work():
+    app = (ROOT / "apps/mac-ui/src/App.svelte").read_text()
+    api = (ROOT / "apps/mac-ui/src/lib/api.js").read_text()
+
+    assert "stopBackend: () => request(\"/backend/stop\", { method: \"POST\" })" in api
+    assert "backendBusy" in app
+    assert "backendButtonDisabled = rendering || backendBusy" in app
+    assert 'backendButtonCopy = runtime.status === "ready" ? "Stop A100" : runtime.label' in app
+    assert "async function stopBackend()" in app
+    assert "runtime = await api.stopBackend()" in app
+    assert "A100 backend stopped to save compute" in app
+    assert "async function toggleBackend()" in app
+    assert 'if (runtime.status === "ready") await stopBackend()' in app
+    assert "on:click={toggleBackend}" in app
+    assert "Stop the Colab A100 backend to save compute hours" in app
+    assert "Stop A100 backend to save compute" in app
+
+
 def test_smplx_body_studio_modal_is_wired_without_replacing_friendly_pose_controls():
     app = (ROOT / "apps/mac-ui/src/App.svelte").read_text()
     inspector = (ROOT / "apps/mac-ui/src/lib/Inspector.svelte").read_text()

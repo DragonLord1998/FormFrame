@@ -26,6 +26,7 @@ export const api = {
   health: () => request("/health"),
   startBackend: (provider = "colab") =>
     request(`/backend/start?provider=${encodeURIComponent(provider)}`, { method: "POST" }),
+  stopBackend: () => request("/backend/stop", { method: "POST" }),
   listProjects: () => request("/projects"),
   createProject: (project) => request("/projects", { method: "POST", body: JSON.stringify(project) }),
   saveProject: (project) =>
@@ -50,6 +51,31 @@ export const api = {
     }
     return response.json();
   },
+  uploadIdentityLora: async (projectId, file, options = {}) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (options.trigger_token) form.append("trigger_token", options.trigger_token);
+    if (options.strength !== undefined && options.strength !== null) {
+      form.append("strength", String(options.strength));
+    }
+    const response = await fetch(
+      `${API_ROOT}/projects/${encodeURIComponent(projectId)}/identity-lora`,
+      { method: "POST", body: form }
+    );
+    if (!response.ok) {
+      let detail = `${response.status} ${response.statusText}`;
+      try {
+        const payload = await response.json();
+        detail = payload.detail || detail;
+      } catch {
+        // Keep the HTTP status when a response has no JSON body.
+      }
+      throw new Error(detail);
+    }
+    return response.json();
+  },
+  removeIdentityLora: (projectId) =>
+    request(`/projects/${encodeURIComponent(projectId)}/identity-lora`, { method: "DELETE" }),
   removeReference: (projectId, referenceId) =>
     request(
       `/projects/${encodeURIComponent(projectId)}/references/${encodeURIComponent(referenceId)}`,

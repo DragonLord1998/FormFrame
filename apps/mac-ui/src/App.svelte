@@ -44,11 +44,15 @@
   let geometryUrl = "";
   let geometryTimer;
   let uploadingReference = "";
+  let uploadingIdentityLora = false;
   let bodyStudioOpen = false;
   let expressionStudioOpen = false;
 
   $: rendering = jobs.some((job) => ["queued", "freezing", "exporting", "packaging", "rendering"].includes(job.status));
   $: canRender = ["ready", "rendering"].includes(runtime.status);
+  $: backendBusy = ["provisioning", "installing", "restoring", "starting", "loading", "warming"].includes(runtime.status);
+  $: backendButtonDisabled = rendering || backendBusy;
+  $: backendButtonCopy = runtime.status === "ready" ? "Stop A100" : runtime.label;
   $: geometryKey = JSON.stringify({
     character: project.character,
     pose: project.pose,
@@ -121,11 +125,27 @@
     }
   }
 
+  async function stopBackend() {
+    notice = "";
+    try {
+      runtime = await api.stopBackend();
+      notice = "A100 backend stopped to save compute";
+      window.setTimeout(() => (notice = ""), 2200);
+    } catch (error) {
+      notice = error.message;
+    }
+  }
+
+  async function toggleBackend() {
+    if (runtime.status === "ready") await stopBackend();
+    else await startBackend();
+  }
+
   async function addReference(role, file) {
     uploadingReference = role;
     notice = "";
     try {
-      project = await api.uploadReference(project.project_id, role, file);
+      project = normalizeProject(await api.uploadReference(project.project_id, role, file));
       notice = "Reference stored locally";
       window.setTimeout(() => (notice = ""), 2200);
     } catch (error) {
@@ -138,8 +158,33 @@
   async function removeReference(referenceId) {
     notice = "";
     try {
-      project = await api.removeReference(project.project_id, referenceId);
+      project = normalizeProject(await api.removeReference(project.project_id, referenceId));
       notice = "Reference removed from character";
+      window.setTimeout(() => (notice = ""), 2200);
+    } catch (error) {
+      notice = error.message;
+    }
+  }
+
+  async function attachIdentityLora(file, options) {
+    uploadingIdentityLora = true;
+    notice = "";
+    try {
+      project = normalizeProject(await api.uploadIdentityLora(project.project_id, file, options));
+      notice = "Identity LoRA attached";
+      window.setTimeout(() => (notice = ""), 2200);
+    } catch (error) {
+      notice = error.message;
+    } finally {
+      uploadingIdentityLora = false;
+    }
+  }
+
+  async function removeIdentityLora() {
+    notice = "";
+    try {
+      project = normalizeProject(await api.removeIdentityLora(project.project_id));
+      notice = "Identity LoRA removed";
       window.setTimeout(() => (notice = ""), 2200);
     } catch (error) {
       notice = error.message;
@@ -188,9 +233,15 @@
         {#if saving}<span class="mini-loader"></span>{:else}<Save size={16} />{/if}
         {saving ? "Saving" : "Save"}
       </button>
-      <button class="runtime-button {runtime.status}" on:click={startBackend} disabled={["provisioning","installing","restoring","starting","loading","warming","ready","rendering"].includes(runtime.status)}>
+      <button
+        class="runtime-button {runtime.status}"
+        on:click={toggleBackend}
+        disabled={backendButtonDisabled}
+        title={runtime.status === "ready" ? "Stop the Colab A100 backend to save compute hours" : "Start the Colab backend"}
+        aria-label={runtime.status === "ready" ? "Stop A100 backend to save compute" : "Start Colab backend"}
+      >
         {#if runtime.status === "offline"}<CloudOff size={16} />{:else if runtime.status === "ready"}<Check size={16} />{:else}<Cloud size={16} />{/if}
-        <span><small>Backend</small><strong>{runtime.label}</strong></span>
+        <span><small>{runtime.status === "ready" ? "Save compute" : "Backend"}</small><strong>{backendButtonCopy}</strong></span>
         {#if !["offline", "ready", "rendering"].includes(runtime.status)}
           <i style={`--runtime-progress:${runtime.progress}%`}></i>
         {/if}
@@ -230,9 +281,12 @@
       {canRender}
       {rendering}
       {uploadingReference}
+      {uploadingIdentityLora}
       onRender={renderFrame}
       onReference={addReference}
       onRemoveReference={removeReference}
+      onIdentityLora={attachIdentityLora}
+      onRemoveIdentityLora={removeIdentityLora}
       onOpenBody={() => (bodyStudioOpen = true)}
       onOpenExpression={() => (expressionStudioOpen = true)}
     />

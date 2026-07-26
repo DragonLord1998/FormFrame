@@ -197,6 +197,13 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
         progress(62, "Negotiating reusable assets")
         reusable_assets = _reusable_assets(bundle_path)
         transfer_plan = self._stage_reusable_assets(bundle_path, reusable_assets)
+        identity_lora = _identity_lora_asset(bundle_path)
+        if identity_lora:
+            progress(64, "Staging trained identity LoRA")
+            transfer_plan["identity_lora"] = self._stage_identity_lora(
+                identity_lora,
+                local_job_dir,
+            )
         progress(66, "Uploading immutable .ffjob with Colab CLI")
         self.cli.upload(bundle_path, remote_bundle)
         used_fallback = False
@@ -251,6 +258,13 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
         except GatewayError:
             return
 
+    def stop(self) -> None:
+        result = self.cli.stop()
+        if result.returncode:
+            raise ColabCliError(
+                result.stderr or result.stdout or "Colab CLI failed to stop the FormFrame session"
+            )
+
     def _stage_reusable_assets(self, bundle_path: Path, assets: list[ReusableAsset]) -> dict[str, Any]:
         if not assets:
             return {
@@ -294,6 +308,77 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
             "control_route": "cloudflare",
         }
 
+    def _stage_identity_lora(
+        self,
+        asset: ReusableAsset,
+        local_job_dir: Path,
+    ) -> dict[str, Any]:
+        local_root = local_job_dir.resolve().parents[1]
+        local_path = local_root / "assets" / asset.sha256
+        if (
+            not local_path.is_file()
+            or local_path.stat().st_size != asset.bytes
+            or _sha256(local_path) != asset.sha256
+        ):
+            raise RemoteRuntimeError("Attached identity LoRA is missing or corrupt")
+        remote_root = "/content/formframe/ComfyUI/models/loras"
+        remote_path = f"{remote_root}/{asset.path}"
+        sidecar_path = f"{remote_path}.sha256"
+        probe = f"""
+from pathlib import Path
+path = Path({remote_path!r})
+sidecar = Path({sidecar_path!r})
+hit = (
+    path.is_file()
+    and path.stat().st_size == {asset.bytes}
+    and sidecar.is_file()
+    and sidecar.read_text(encoding="utf-8").strip() == {asset.sha256!r}
+)
+print("FORMFRAME_LORA_CACHE:" + ("hit" if hit else "miss"))
+"""
+        checked = self.cli.exec_source(
+            probe,
+            f"identity_lora_probe_{asset.sha256[:12]}",
+            timeout_seconds=60,
+        )
+        cache_hit = "FORMFRAME_LORA_CACHE:hit" in checked.stdout
+        if not cache_hit:
+            self.cli.exec_source(
+                f"from pathlib import Path\nPath({remote_root!r}).mkdir(parents=True, exist_ok=True)\n",
+                f"identity_lora_prepare_{asset.sha256[:12]}",
+                timeout_seconds=60,
+            )
+            self.cli.upload(local_path, remote_path, timeout_seconds=1800)
+            verify = f"""
+import hashlib
+from pathlib import Path
+path = Path({remote_path!r})
+digest = hashlib.sha256()
+with path.open("rb") as stream:
+    for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+        digest.update(chunk)
+observed = digest.hexdigest()
+if path.stat().st_size != {asset.bytes} or observed != {asset.sha256!r}:
+    raise RuntimeError("Uploaded identity LoRA failed integrity verification")
+Path({sidecar_path!r}).write_text(observed + "\\n", encoding="utf-8")
+print("FORMFRAME_LORA_CACHE:verified")
+"""
+            verified = self.cli.exec_source(
+                verify,
+                f"identity_lora_verify_{asset.sha256[:12]}",
+                timeout_seconds=900,
+            )
+            if "FORMFRAME_LORA_CACHE:verified" not in verified.stdout:
+                raise RemoteRuntimeError("Identity LoRA verification marker is missing")
+        return {
+            "attached": True,
+            "sha256": asset.sha256,
+            "bytes": asset.bytes,
+            "cache_hit": cache_hit,
+            "uploaded": not cache_hit,
+            "bulk_route": "colab-cli",
+        }
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -335,6 +420,30 @@ def _reusable_assets(bundle_path: Path) -> list[ReusableAsset]:
             reusable.append(ReusableAsset(path=path, sha256=digest, bytes=int(byte_count or len(data))))
     by_digest = {asset.sha256: asset for asset in reusable}
     return sorted(by_digest.values(), key=lambda asset: asset.sha256)
+
+
+def _identity_lora_asset(bundle_path: Path) -> ReusableAsset | None:
+    with zipfile.ZipFile(bundle_path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    value = manifest.get("assets", {}).get("identity_lora")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RemoteRuntimeError("Identity LoRA manifest entry is invalid")
+    path = value.get("path")
+    digest = value.get("sha256")
+    byte_count = value.get("bytes")
+    if (
+        not isinstance(path, str)
+        or not isinstance(digest, str)
+        or path != f"formframe_{digest}.safetensors"
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+        or not isinstance(byte_count, int)
+        or not 0 < byte_count <= 2 * 1024 * 1024 * 1024
+    ):
+        raise RemoteRuntimeError("Identity LoRA manifest metadata is invalid")
+    return ReusableAsset(path=path, sha256=digest, bytes=byte_count)
 
 
 def _cli_fallback_source(job_id: str, remote_bundle: str) -> str:

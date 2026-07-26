@@ -22,7 +22,7 @@
         "model_name": "Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors",
         "sub_transformer_name": "transformer",
         "funmodels": [
-          "2",
+          "7",
           0
         ]
       }
@@ -136,6 +136,18 @@
           "1",
           11
         ]
+      }
+    },
+    "7": {
+      "class_type": "LoadZImageLora",
+      "inputs": {
+        "funmodels": [
+          "2",
+          0
+        ],
+        "lora_name": "__FORMFRAME_IDENTITY_LORA__",
+        "strength_model": 1,
+        "lora_cache": true
       }
     }
   }

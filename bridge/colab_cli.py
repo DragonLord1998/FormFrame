@@ -115,6 +115,13 @@ class ColabCli:
             timeout_seconds=240,
         )
 
+    def stop(self) -> CommandResult:
+        return self.run(
+            ["stop", "-s", self.config.session_name],
+            timeout_seconds=120,
+            check=False,
+        )
+
     def upload(self, local_path: Path, remote_path: str, *, timeout_seconds: float = 600) -> CommandResult:
         if not local_path.is_file():
             raise ColabCliError(f"Upload source is missing: {local_path}")

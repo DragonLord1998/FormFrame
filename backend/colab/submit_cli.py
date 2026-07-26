@@ -21,6 +21,7 @@ def main() -> int:
     comfy = ComfyClient(
         settings.comfy_url,
         settings.root / "workflows" / "controlled-character-v1.api.json",
+        settings.root / "ComfyUI" / "models" / "loras",
     )
     prompt_id = comfy.submit(bundle)
     comfy.wait(prompt_id)
@@ -47,4 +48,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

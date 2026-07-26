@@ -187,10 +187,22 @@ export const normalizeVector = (value, length) => {
   });
 };
 
+const normalizeIdentityLora = (value) => {
+  if (!value || typeof value !== "object") return null;
+  const strength = Number(value.strength);
+  return {
+    ...value,
+    filename: value.filename || "identity.safetensors",
+    trigger_token: value.trigger_token || "ff_identity",
+    strength: Number.isFinite(strength) ? strength : 0.75
+  };
+};
+
 export const normalizeProject = (project) => ({
   ...project,
   character: {
     ...project.character,
+    identity_lora: normalizeIdentityLora(project?.character?.identity_lora),
     identity: normalizeVector(project?.character?.identity, 253),
     body_shape: normalizeVector(project?.character?.body_shape, 10)
   },
@@ -217,6 +229,7 @@ export function newProject() {
       preset: "Mara / Studio",
       name: "Mara",
       identity: vector(253, [0.04, -0.11, 0.08]),
+      identity_lora: null,
       body_shape: vector(10, [0.15, -0.07, 0.03]),
       height: 1,
       build: 0.48,

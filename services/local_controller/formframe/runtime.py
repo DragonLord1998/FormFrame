@@ -6,7 +6,7 @@ from typing import Dict, Literal, Set
 
 from fastapi import WebSocket
 
-from bridge.colab_cli import ColabCliError
+from bridge.colab_cli import ColabCli, ColabCliConfig, ColabCliError
 
 from .conditioning import export_job
 from .config import FormFrameSettings
@@ -73,6 +73,61 @@ class RuntimeManager:
             return self.snapshot
         self._start_task = asyncio.create_task(
             self._start_colab_sequence() if provider == "colab" else self._start_local_sequence()
+        )
+        return self.snapshot
+
+    async def stop(self) -> RuntimeSnapshot:
+        active_statuses = {"queued", "freezing", "exporting", "packaging", "rendering"}
+        active_jobs = [job for job in self.jobs.values() if job.status in active_statuses]
+        if active_jobs:
+            raise RuntimeError("Cannot stop the backend while a render job is active")
+        if self._start_task and not self._start_task.done():
+            raise RuntimeError("Cannot stop the backend while it is starting")
+
+        provider = self.snapshot.provider
+        if provider == "colab":
+            if self._remote is not None:
+                await asyncio.to_thread(self._remote.stop)
+            else:
+                if not self.settings.colab_cli_available:
+                    raise OSError(
+                        "FORMFRAME_COLAB_CLI does not point to the Google Colab CLI executable"
+                    )
+                assert self.settings.colab_cli is not None
+                cli = ColabCli(
+                    ColabCliConfig(
+                        executable=self.settings.colab_cli,
+                        session_name=self.settings.colab_session,
+                        gpu=self.settings.colab_gpu,
+                        auth_provider=self.settings.colab_auth,
+                        config_path=self.settings.colab_config,
+                    )
+                )
+                result = await asyncio.to_thread(cli.stop)
+                if result.returncode:
+                    raise ColabCliError(
+                        result.stderr
+                        or result.stdout
+                        or "Colab CLI failed to stop the FormFrame session"
+                    )
+
+        self._remote = None
+        self._production_geometry = None
+        self.snapshot = RuntimeSnapshot(
+            status="offline",
+            label="A100 stopped" if provider == "colab" else "Preview stopped",
+            progress=0,
+            provider=provider,
+            capabilities=self.snapshot.capabilities,
+            readiness_errors=self.settings.remote_readiness_errors(),
+            detail=(
+                f"Stopped the exact Colab session {self.settings.colab_session} to save compute."
+                if provider == "colab"
+                else "Local preview backend stopped."
+            ),
+        )
+        await self.broker.broadcast(
+            {"type": "runtime", "runtime": self.snapshot.model_dump(mode="json")}
         )
         return self.snapshot
 

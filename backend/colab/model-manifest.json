@@ -26,6 +26,13 @@
     "destination": "models/model_patches/Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors",
     "sha256": "d1251cc7bc3486bc61d25c3be498ef394c31c85ddf4ee9137d2e933411f4a689"
   },
+  "identity_lora": {
+    "optional": true,
+    "format": "safetensors",
+    "workflow_node": "LoadZImageLora",
+    "transfer": "colab-cli",
+    "remote_filename": "models/loras/formframe_<sha256>.safetensors"
+  },
   "gnm": {
     "repository": "https://github.com/google/gnm.git",
     "revision": "8294570e208cf55c4710d13c1c269d523524f591",

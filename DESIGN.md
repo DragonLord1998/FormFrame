@@ -81,6 +81,6 @@
 - Test/screenshot expectations: backend API and bundle tests; production frontend build; desktop and compact visual smoke checks
 
 ## Open questions
-- [ ] Select and license the production body model before distribution / product owner / commercial release blocker
-- [ ] Choose the pinned image checkpoint and control adapters / rendering / real Colab output
+- [x] Use locally licensed SMPL-X without redistributing its model files
+- [x] Pin Z-Image Turbo and the Z-Image ControlNet workflow revision
 - [ ] Configure Colab and Cloudflare credentials / infrastructure / live remote render

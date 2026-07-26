@@ -56,10 +56,16 @@ If the named Colab session disappears during a render, the local runtime manager
 performs one bounded reconnect/rehydration attempt and retries the same immutable
 bundle once. It never loops indefinitely.
 
+The studio can explicitly stop the configured named Colab session after work is
+finished. The controller refuses stop requests while a render is active and
+never enumerates or terminates unrelated Colab sessions.
+
 Transfer routing is measured per active session. Bulk payloads stay on Colab
 CLI: bootstrap secrets, `.ffjob` bundles, reusable asset-cache misses, and final
-PNG downloads. Licensed GNM and SMPL-X files remain local; Colab receives only
-their derived conditioning images. Cloudflare carries authenticated control,
+PNG downloads. Trained identity LoRAs also use Colab CLI and are cached inside
+the active ComfyUI `models/loras` directory by SHA-256; Cloudflare sees only
+their controlled manifest metadata. Licensed GNM and SMPL-X files remain local;
+Colab receives only their derived conditioning images. Cloudflare carries authenticated control,
 status/progress, preview delivery, benchmark echo checks, and content-addressed
 cache checks. GitHub is the source of truth for runtime code; credentials are
 passed only through runtime secrets/environment. The local Mac cache records
@@ -83,6 +89,12 @@ project_id.ffproject/
 ```
 
 Generated jobs live in the controller data root and are referenced from project history. A remote runtime is never the source of truth.
+
+Trained identity LoRAs live in the local content-addressed `assets/` store. The
+project records only their filename, SHA-256, byte count, trigger token, and
+strength. A render manifest selects the exact file; the private gateway patches
+only that whitelisted filename and strength into the pinned
+`LoadZImageLora` node.
 
 ## Security boundary
 

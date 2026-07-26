@@ -65,6 +65,8 @@ python scripts/create-comparison-matrix.py --manifest path/to/jobs/<job_id>/mani
   and local expression
 - Project persistence on the Mac with character, expression, outfit, hair-proxy,
   and coarse garment-proxy selections
+- Local attachment and safetensors validation for trained Z-Image Turbo identity
+  LoRAs, with trigger-token and strength controls saved per character
 - Conditioning Contract v1 asset generation
 - Local RGB/depth/pose/optional-normal conditioning contact-sheet validation
 - Pending A-F comparison-matrix scaffold for later live A100 benchmark evidence
@@ -79,9 +81,12 @@ python scripts/create-comparison-matrix.py --manifest path/to/jobs/<job_id>/mani
   Cloudflare for authenticated control, status, progress, and preview delivery
 - Authenticated Cloudflare client and private gateway with Access JWT validation
 - Private ComfyUI supervisor and pinned Z-Image Turbo + ControlNet model manifest
-- Immutable two-pass pose-then-depth ComfyUI API workflow
+- Immutable Z-Image Turbo workflow with an optional `LoadZImageLora` stage and
+  two-pass pose-then-depth ControlNet sampling
 - `FormFrameJobLoader` and `FormFrameResultSaver` custom nodes
 - Runtime lifecycle, queue, progress, cancellation, preview/result endpoints
+- Explicit `Save compute / Stop A100` control that targets only the configured
+  FormFrame Colab session and refuses to interrupt an active render
 - One-shot Colab session recovery and pinned-runtime rehydration before a failed
   render is surfaced
 - Render history and reproducibility metadata
@@ -96,6 +101,11 @@ contract and never accepts shell commands or arbitrary ComfyUI JSON.
 
 Reusable reference assets are negotiated by SHA-256 through the private gateway
 and uploaded through Colab CLI only when the active Colab cache is missing them.
+An attached trained identity LoRA remains in the Mac content-addressed asset
+store, is hash-pinned in the job manifest without entering the `.ffjob`, and is
+uploaded directly into ComfyUI through Colab CLI. Cloudflare carries only its
+metadata. Raw references are labelled as awaiting training until a trained LoRA
+is attached.
 The local Mac remote cache stores source-revision and model-manifest metadata
 only; pinned model weights rehydrate inside the active Colab session.
 

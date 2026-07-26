@@ -306,7 +306,24 @@ def export_job(
             }
         )
     assets["references"] = reference_assets
+    identity_lora = project.character.identity_lora
+    if identity_lora:
+        local_lora = root / "assets" / identity_lora.sha256
+        if (
+            not local_lora.is_file()
+            or local_lora.stat().st_size != identity_lora.bytes
+            or sha256(local_lora) != identity_lora.sha256
+        ):
+            raise ValueError("Attached identity LoRA is missing or corrupt")
+        assets["identity_lora"] = {
+            "path": f"formframe_{identity_lora.sha256}.safetensors",
+            "sha256": identity_lora.sha256,
+            "bytes": identity_lora.bytes,
+        }
     versions = _model_versions()
+    prompt = project.render.prompt
+    if identity_lora:
+        prompt = f"{identity_lora.trigger_token}, {prompt}"
     manifest: Dict[str, object] = {
         "schema_version": 1,
         "job_id": job.job_id,
@@ -316,7 +333,7 @@ def export_job(
         "project_id": project.project_id,
         "width": project.render.width,
         "height": project.render.height,
-        "prompt": project.render.prompt,
+        "prompt": prompt,
         "negative_prompt": project.render.negative_prompt,
         "seed": project.render.seed,
         "denoise": project.render.denoise,
@@ -324,7 +341,15 @@ def export_job(
             "depth_strength": project.render.depth_strength,
             "pose_strength": project.render.pose_strength,
             "normal_strength": 0,
-            "identity_mode": "trained-lora-required" if reference_assets else "none",
+            "identity_mode": (
+                "trained-lora"
+                if identity_lora
+                else "references-awaiting-training"
+                if reference_assets
+                else "none"
+            ),
+            "identity_lora_strength": identity_lora.strength if identity_lora else 0,
+            "identity_trigger_token": identity_lora.trigger_token if identity_lora else "",
         },
         "versions": {
             "geometry_provider": geometry.provider_id,

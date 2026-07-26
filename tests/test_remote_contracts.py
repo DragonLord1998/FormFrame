@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import ast
 import json
@@ -10,13 +12,16 @@ import pytest
 
 from backend.colab import bootstrap
 from backend.colab.formframe_gateway.bundle import validate_bundle
+from backend.colab.formframe_gateway.comfy import ComfyClient
 from bridge.cloudflare import CloudflareGateway, GatewayConfig, GatewayError
 from bridge.colab_cli import ColabCli, ColabCliConfig, ColabCliError, _redact, parse_probe, require_a100
 from bridge.runtime_package import RuntimeSecrets, build_runtime_archive, write_runtime_secrets
 from services.local_controller.formframe.config import FormFrameSettings
 from services.local_controller.formframe.remote import (
     ColabRemoteRuntime,
+    ReusableAsset,
     _cli_fallback_source,
+    _identity_lora_asset,
     _reusable_assets,
 )
 
@@ -59,6 +64,16 @@ def test_colab_cli_uses_argument_array_and_exact_session(tmp_path: Path):
     result = cli.status()
     assert result.returncode == 0
     assert result.stdout.splitlines() == ["--auth", "adc", "status", "-s", "formframe-a100"]
+
+    stopped = cli.stop()
+    assert stopped.returncode == 0
+    assert stopped.stdout.splitlines() == [
+        "--auth",
+        "adc",
+        "stop",
+        "-s",
+        "formframe-a100",
+    ]
 
 
 def test_colab_cli_redacts_token_flags():
@@ -118,7 +133,19 @@ def test_cloudflare_benchmark_verifies_echo_payload():
     assert metrics["combined_mbps"] > 0
 
 
-def _bundle(path: Path, job_id: str, *, corrupt: bool = False) -> Path:
+def _bundle(
+    path: Path,
+    job_id: str,
+    *,
+    corrupt: bool = False,
+    identity_lora: bytes | None = None,
+) -> Path:
+    workflow_path = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "workflows"
+        / "controlled-character-v1.api.json"
+    )
     files = {
         "rgb.webp": b"rgb",
         "depth.png": b"depth",
@@ -128,7 +155,7 @@ def _bundle(path: Path, job_id: str, *, corrupt: bool = False) -> Path:
         "schema_version": 1,
         "job_id": job_id,
         "workflow": "controlled-character-v1",
-        "workflow_hash": "0" * 64,
+        "workflow_hash": hashlib.sha256(workflow_path.read_bytes()).hexdigest(),
         "character_id": "character_test",
         "project_id": "project_test",
         "width": 768,
@@ -152,6 +179,20 @@ def _bundle(path: Path, job_id: str, *, corrupt: bool = False) -> Path:
     }
     if corrupt:
         manifest["assets"]["pose"]["sha256"] = "0" * 64
+    if identity_lora is not None:
+        digest = hashlib.sha256(identity_lora).hexdigest()
+        manifest["assets"]["identity_lora"] = {
+            "path": f"formframe_{digest}.safetensors",
+            "sha256": digest,
+            "bytes": len(identity_lora),
+        }
+        manifest["controls"].update(
+            {
+                "identity_mode": "trained-lora",
+                "identity_lora_strength": 0.85,
+                "identity_trigger_token": "ff_mara",
+            }
+        )
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("manifest.json", json.dumps(manifest))
         for name, value in files.items():
@@ -226,6 +267,59 @@ def test_gateway_bundle_validation_verifies_fixed_workflow_and_hashes(tmp_path: 
         validate_bundle(_bundle(tmp_path / "bad.ffjob", job_id, corrupt=True), job_id)
 
 
+def test_trained_identity_lora_is_validated_and_patched_into_pinned_workflow(tmp_path: Path):
+    job_id = "job_123456789abc"
+    lora = b"trained identity lora"
+    digest = hashlib.sha256(lora).hexdigest()
+    bundle = _bundle(
+        tmp_path / "identity.ffjob",
+        job_id,
+        identity_lora=lora,
+    )
+    validated = validate_bundle(bundle, job_id)
+    assert validated.manifest["assets"]["identity_lora"]["sha256"] == digest
+    assert _identity_lora_asset(bundle) == ReusableAsset(
+        path=f"formframe_{digest}.safetensors",
+        sha256=digest,
+        bytes=len(lora),
+    )
+    lora_root = tmp_path / "loras"
+    lora_root.mkdir()
+    (lora_root / f"formframe_{digest}.safetensors").write_bytes(lora)
+    workflow_path = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "workflows"
+        / "controlled-character-v1.api.json"
+    )
+    prompt = json.loads(workflow_path.read_text())["prompt"]
+    client = ComfyClient("http://127.0.0.1:8188", workflow_path, lora_root)
+
+    client._configure_identity_lora(prompt, bundle)
+
+    assert prompt["7"]["class_type"] == "LoadZImageLora"
+    assert prompt["7"]["inputs"]["lora_name"] == f"formframe_{digest}.safetensors"
+    assert prompt["7"]["inputs"]["strength_model"] == 0.85
+    assert prompt["3"]["inputs"]["funmodels"] == ["7", 0]
+
+
+def test_workflow_bypasses_identity_lora_node_when_none_is_attached(tmp_path: Path):
+    workflow_path = (
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "workflows"
+        / "controlled-character-v1.api.json"
+    )
+    prompt = json.loads(workflow_path.read_text())["prompt"]
+    bundle = _bundle(tmp_path / "plain.ffjob", "job_123456789abc")
+    client = ComfyClient("http://127.0.0.1:8188", workflow_path, tmp_path / "loras")
+
+    client._configure_identity_lora(prompt, bundle)
+
+    assert "7" not in prompt
+    assert prompt["3"]["inputs"]["funmodels"] == ["2", 0]
+
+
 def test_reusable_asset_negotiation_uploads_only_gateway_misses(tmp_path: Path):
     bundle, missing_digest, cached_digest = _bundle_with_reference(
         tmp_path / "refs.ffjob",
@@ -253,6 +347,57 @@ def test_reusable_asset_negotiation_uploads_only_gateway_misses(tmp_path: Path):
     assert plan["missing_count"] == 1
     assert plan["uploaded_count"] == 1
     assert runtime.cli.uploads == [(b"reference image", f"/content/formframe/assets/{missing_digest}")]
+
+
+def test_identity_lora_uses_cli_bulk_transfer_and_remote_hash_cache(tmp_path: Path):
+    content = b"trained identity lora"
+    digest = hashlib.sha256(content).hexdigest()
+    data_root = tmp_path / "data"
+    local_job_dir = data_root / "jobs" / "job_123456789abc"
+    local_job_dir.mkdir(parents=True)
+    assets = data_root / "assets"
+    assets.mkdir()
+    (assets / digest).write_bytes(content)
+    asset = ReusableAsset(
+        path=f"formframe_{digest}.safetensors",
+        sha256=digest,
+        bytes=len(content),
+    )
+
+    class FakeResult:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    class FakeCli:
+        def __init__(self):
+            self.uploads = []
+            self.exec_names = []
+
+        def exec_source(self, _source, name, **_kwargs):
+            self.exec_names.append(name)
+            if "probe" in name:
+                return FakeResult("FORMFRAME_LORA_CACHE:miss")
+            if "verify" in name:
+                return FakeResult("FORMFRAME_LORA_CACHE:verified")
+            return FakeResult("")
+
+        def upload(self, local_path, remote_path, **_kwargs):
+            self.uploads.append((Path(local_path).read_bytes(), remote_path))
+
+    runtime = object.__new__(ColabRemoteRuntime)
+    runtime.cli = FakeCli()
+    plan = runtime._stage_identity_lora(asset, local_job_dir)
+
+    assert plan["bulk_route"] == "colab-cli"
+    assert plan["cache_hit"] is False
+    assert plan["uploaded"] is True
+    assert runtime.cli.uploads == [
+        (
+            content,
+            f"/content/formframe/ComfyUI/models/loras/formframe_{digest}.safetensors",
+        )
+    ]
+    assert any("verify" in name for name in runtime.cli.exec_names)
 
 
 def test_remote_render_downloads_final_png_with_cli_even_after_cloudflare_completion(tmp_path: Path):
@@ -399,6 +544,9 @@ def test_fixed_workflow_runs_pose_then_depth():
     assert prompt["5"]["inputs"]["inpaint_image"] == ["4", 0]
     assert prompt["4"]["inputs"]["mask_image"] == ["1", 10]
     assert prompt["6"]["inputs"]["job_metadata"] == ["1", 11]
+    assert prompt["7"]["class_type"] == "LoadZImageLora"
+    assert prompt["7"]["inputs"]["funmodels"] == ["2", 0]
+    assert prompt["3"]["inputs"]["funmodels"] == ["7", 0]
     nodes_path = (
         Path(__file__).resolve().parents[1]
         / "comfy"

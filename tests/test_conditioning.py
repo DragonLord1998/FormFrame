@@ -14,7 +14,12 @@ from services.local_controller.formframe.conditioning import (
     verify_bundle,
 )
 from services.local_controller.formframe.geometry import ProceduralGuideGeometry
-from services.local_controller.formframe.models import Project, ReferenceImage, RenderJob
+from services.local_controller.formframe.models import (
+    IdentityLora,
+    Project,
+    ReferenceImage,
+    RenderJob,
+)
 
 
 def test_conditioning_assets_share_dimensions_and_hashes(tmp_path: Path):
@@ -191,10 +196,45 @@ def test_identity_training_references_are_hash_pinned_in_bundle(tmp_path: Path):
     reference = manifest["assets"]["references"][0]
     assert reference["role"] == "face_front"
     assert reference["sha256"] == digest
-    assert manifest["controls"]["identity_mode"] == "trained-lora-required"
+    assert manifest["controls"]["identity_mode"] == "references-awaiting-training"
     with zipfile.ZipFile(bundle) as archive:
         assert reference["path"] in archive.namelist()
         assert hashlib.sha256(archive.read(reference["path"])).hexdigest() == digest
+
+
+def test_trained_identity_lora_is_hash_pinned_without_entering_the_ffjob(tmp_path: Path):
+    project = Project()
+    content = b"trained identity lora"
+    digest = hashlib.sha256(content).hexdigest()
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / digest).write_bytes(content)
+    project.character.identity_lora = IdentityLora(
+        sha256=digest,
+        filename="mara.safetensors",
+        bytes=len(content),
+        trigger_token="ff_mara",
+        strength=0.85,
+    )
+    job = RenderJob(project_id=project.project_id, provider="colab")
+
+    bundle, manifest, _preview, _result = export_job(
+        project,
+        job,
+        tmp_path,
+        create_local_result=False,
+    )
+
+    assert manifest["prompt"].startswith("ff_mara, ")
+    assert manifest["controls"]["identity_mode"] == "trained-lora"
+    assert manifest["controls"]["identity_lora_strength"] == 0.85
+    assert manifest["assets"]["identity_lora"] == {
+        "path": f"formframe_{digest}.safetensors",
+        "sha256": digest,
+        "bytes": len(content),
+    }
+    with zipfile.ZipFile(bundle) as archive:
+        assert f"formframe_{digest}.safetensors" not in archive.namelist()
 
 
 def test_hair_and_garment_proxy_selections_change_local_conditioning(tmp_path: Path):

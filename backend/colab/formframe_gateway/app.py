@@ -23,7 +23,11 @@ for directory in (settings.inbox, settings.work, settings.outbox):
 
 auth = AccessVerifier(settings)
 workflow_path = settings.root / "workflows" / "controlled-character-v1.api.json"
-comfy = ComfyClient(settings.comfy_url, workflow_path)
+comfy = ComfyClient(
+    settings.comfy_url,
+    workflow_path,
+    settings.root / "ComfyUI" / "models" / "loras",
+)
 jobs: dict[str, RemoteJob] = {}
 gpu_lock: Optional[asyncio.Lock] = None
 submit_lock: Optional[asyncio.Lock] = None

@@ -45,11 +45,25 @@ class RecoveringRemote:
         progress("provisioning", "Reconnecting A100", 35, "Restoring pinned runtime")
         return {"gpu": "A100"}
 
+    def stop(self):
+        self.stop_calls = getattr(self, "stop_calls", 0) + 1
+
 
 def runtime_with(remote, tmp_path: Path) -> RuntimeManager:
     runtime = object.__new__(RuntimeManager)
     runtime._remote = remote
+    runtime._production_geometry = object()
+    runtime._start_task = None
     runtime.store = FakeStore(tmp_path)
+    runtime.settings = type(
+        "Settings",
+        (),
+        {
+            "colab_session": "formframe-a100",
+            "remote_readiness_errors": lambda self: [],
+        },
+    )()
+    runtime.jobs = {}
     runtime.broker = FakeBroker()
     runtime.snapshot = RuntimeSnapshot(
         status="rendering",
@@ -117,3 +131,36 @@ def test_integrity_failure_is_not_retried(tmp_path: Path):
         )
     assert remote.start_calls == 0
     assert remote.render_calls == 1
+
+
+def test_runtime_stop_stops_exact_remote_and_resets_runtime(tmp_path: Path):
+    remote = RecoveringRemote()
+    runtime = runtime_with(remote, tmp_path)
+    runtime.snapshot.status = "ready"
+
+    snapshot = asyncio.run(runtime.stop())
+
+    assert remote.stop_calls == 1
+    assert runtime._remote is None
+    assert runtime._production_geometry is None
+    assert snapshot.status == "offline"
+    assert snapshot.label == "A100 stopped"
+    assert "formframe-a100" in snapshot.detail
+    assert runtime.broker.payloads[-1]["runtime"]["status"] == "offline"
+
+
+def test_runtime_stop_rejects_active_render_job(tmp_path: Path):
+    remote = RecoveringRemote()
+    runtime = runtime_with(remote, tmp_path)
+    runtime.jobs = {
+        "job_active": RenderJob(
+            project_id="project_test",
+            provider="colab",
+            status="rendering",
+        )
+    }
+
+    with pytest.raises(RuntimeError, match="render job is active"):
+        asyncio.run(runtime.stop())
+
+    assert not hasattr(remote, "stop_calls")

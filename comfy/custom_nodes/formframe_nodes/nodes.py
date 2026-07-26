@@ -171,6 +171,9 @@ class FormFrameResultSaver:
             "steps": 8,
             "cfg": 0,
             "seed": manifest["seed"],
+            "identity_mode": manifest["controls"].get("identity_mode", "none"),
+            "identity_lora_strength": manifest["controls"].get("identity_lora_strength", 0),
+            "identity_trigger_token": manifest["controls"].get("identity_trigger_token", ""),
             "input_hashes": input_hashes,
             "output_sha256": hashlib.sha256(result.read_bytes()).hexdigest(),
         }

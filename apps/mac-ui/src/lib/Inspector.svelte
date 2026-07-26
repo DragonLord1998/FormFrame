@@ -16,9 +16,16 @@
   export let rendering;
   export let onReference;
   export let onRemoveReference;
+  export let onIdentityLora;
+  export let onRemoveIdentityLora;
   export let onOpenBody;
   export let onOpenExpression;
   export let uploadingReference = "";
+  export let uploadingIdentityLora = false;
+
+  let pendingLoraTriggerToken = "ff_identity";
+  let pendingLoraStrength = 0.75;
+  $: identityLora = project.character.identity_lora;
 
   const referenceSlots = [
     ["face_front", "Face front"],
@@ -34,6 +41,24 @@
     const file = event.currentTarget.files?.[0];
     if (file) onReference(role, file);
     event.currentTarget.value = "";
+  };
+
+  const chooseIdentityLora = (event) => {
+    const file = event.currentTarget.files?.[0];
+    if (file) {
+      onIdentityLora(file, {
+        trigger_token: pendingLoraTriggerToken.trim(),
+        strength: pendingLoraStrength
+      });
+    }
+    event.currentTarget.value = "";
+  };
+
+  const loraSizeLabel = (bytes) => {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return "size unknown";
+    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+    return `${(value / 1024 / 1024).toFixed(1)} MB`;
   };
 
   const applyPreset = (name) => {
@@ -164,6 +189,61 @@
           </div>
         {/each}
       </div>
+    </section>
+    <section class="control-group">
+      <h3>Identity LoRA</h3>
+      <p class="section-help">Attach an already-trained Z-Image Turbo identity LoRA. This metadata is saved with the project and sent with render jobs; training remains outside the studio.</p>
+      <div class:complete={identityLora} class="reference-slot">
+        <div>
+          <strong>{identityLora ? identityLora.filename : "No LoRA attached"}</strong>
+          <small>
+            {#if identityLora}
+              {loraSizeLabel(identityLora.bytes)} · {identityLora.sha256?.slice(0, 12) || "hash pending"}
+            {:else}
+              .safetensors only
+            {/if}
+          </small>
+        </div>
+        {#if identityLora}
+          <button type="button" on:click={onRemoveIdentityLora}>Remove</button>
+        {:else}
+          <label>
+            {uploadingIdentityLora ? "Attaching…" : "Attach"}
+            <input
+              type="file"
+              accept=".safetensors,application/octet-stream"
+              disabled={uploadingIdentityLora}
+              on:change={chooseIdentityLora}
+            />
+          </label>
+        {/if}
+      </div>
+      {#if identityLora}
+        <label class="select-field">Trigger token
+          <input
+            class="bare-input"
+            aria-label="Identity LoRA trigger token"
+            bind:value={project.character.identity_lora.trigger_token}
+            on:input={() => (project = project)}
+          />
+        </label>
+        <Field
+          label="LoRA strength"
+          bind:value={project.character.identity_lora.strength}
+          min={0}
+          max={1.5}
+          step={0.05}
+        />
+      {:else}
+        <label class="select-field">Trigger token
+          <input
+            class="bare-input"
+            aria-label="Pending identity LoRA trigger token"
+            bind:value={pendingLoraTriggerToken}
+          />
+        </label>
+        <Field label="LoRA strength" bind:value={pendingLoraStrength} min={0} max={1.5} step={0.05} />
+      {/if}
     </section>
   {:else if mode === "Pose"}
     <header class="panel-header">

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -111,6 +112,25 @@ class ProjectStore:
 
     def asset_path(self, digest: str) -> Path:
         return self.assets_dir / digest
+
+    def save_asset_file(self, digest: str, source: Path) -> Path:
+        if len(digest) != 64 or any(value not in "0123456789abcdef" for value in digest):
+            raise ValueError("Asset digest must be a lowercase SHA-256 value")
+        if not source.is_file():
+            raise ValueError("Asset source is missing")
+        self.assets_dir.mkdir(parents=True, exist_ok=True)
+        destination = self.asset_path(digest)
+        if destination.is_file():
+            observed = hashlib.sha256()
+            with destination.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+                    observed.update(chunk)
+            if observed.hexdigest() == digest:
+                source.unlink()
+                return destination
+            destination.unlink()
+        source.replace(destination)
+        return destination
 
     def save_reference(self, project_id: str, digest: str, content: bytes) -> Path:
         if len(digest) != 64 or any(value not in "0123456789abcdef" for value in digest):

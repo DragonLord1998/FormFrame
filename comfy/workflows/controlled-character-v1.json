@@ -1,20 +1,20 @@
 {
   "formframe_workflow": "controlled-character-v1",
   "immutable": true,
-  "status": "adapter-template",
-  "description": "Pinned workflow contract. Replace adapter-template nodes only when the production model stack is selected, then release as a new workflow version.",
+  "status": "production-pinned-awaiting-live-a100-validation",
+  "description": "Pinned Z-Image Turbo, optional trained identity LoRA, and pose-then-depth ControlNet workflow contract.",
   "inputs": [
     "rgb",
     "depth",
     "pose",
-    "references",
+    "trained_identity_lora",
     "prompt",
     "negative_prompt",
     "seed",
     "denoise",
     "depth_strength",
     "pose_strength",
-    "reference_strength"
+    "identity_lora_strength"
   ],
   "outputs": [
     "preview_webp",
@@ -22,4 +22,3 @@
     "result_json"
   ]
 }
-

@@ -41,6 +41,14 @@ class ReferenceImage(BaseModel):
     height: int = Field(ge=1, le=4096)
 
 
+class IdentityLora(BaseModel):
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    filename: str = Field(min_length=1, max_length=255)
+    bytes: int = Field(ge=1, le=2 * 1024 * 1024 * 1024)
+    trigger_token: str = Field(default="ff_character", pattern=r"^[A-Za-z0-9_.-]{1,64}$")
+    strength: float = Field(default=1.0, ge=-10, le=10)
+
+
 class CharacterState(BaseModel):
     character_id: str = Field(default_factory=lambda: new_id("character"))
     preset: str = "Mara / Studio"
@@ -59,6 +67,7 @@ class CharacterState(BaseModel):
     leg_length: float = Field(default=0.55, ge=0, le=1)
     appearance: Appearance = Field(default_factory=Appearance)
     references: List[ReferenceImage] = Field(default_factory=list, max_length=4)
+    identity_lora: Optional[IdentityLora] = None
 
 
 class PoseState(BaseModel):
