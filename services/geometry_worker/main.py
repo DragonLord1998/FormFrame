@@ -58,20 +58,61 @@ def _fit(values: list[float], length: int, scale: float = 1.0) -> np.ndarray:
 
 def _smplx_pose(project: dict[str, Any]) -> np.ndarray:
     pose = project["pose"]
-    body = np.zeros((21, 3), dtype=np.float32)
-    body[2] = _axis_angle(float(pose["torso_twist"]), 1)
-    body[11] = _axis_angle(float(pose["head_turn"]) * 0.35, 1)
+    body = np.radians(
+        _fit(pose.get("smplx_body_pose", []), 63).reshape(21, 3)
+    ).astype(np.float32)
+    body[2] += _axis_angle(float(pose["torso_twist"]), 1)
+    body[11] += _axis_angle(float(pose["head_turn"]) * 0.35, 1)
     body[11] += _axis_angle(float(pose["head_tilt"]) * 0.35, 2)
-    body[14] = _axis_angle(float(pose["head_turn"]) * 0.65, 1)
+    body[14] += _axis_angle(float(pose["head_turn"]) * 0.65, 1)
     body[14] += _axis_angle(float(pose["head_tilt"]) * 0.65, 2)
-    body[15] = _axis_angle(float(pose["left_arm"]), 2)
-    body[16] = _axis_angle(-float(pose["right_arm"]), 2)
-    body[17] = _axis_angle(float(pose["left_elbow"]), 1)
-    body[18] = _axis_angle(-float(pose["right_elbow"]), 1)
-    body[3] = _axis_angle(float(pose["left_knee"]), 0)
-    body[4] = _axis_angle(float(pose["right_knee"]), 0)
+    body[15] += _axis_angle(float(pose["left_arm"]), 2)
+    body[16] += _axis_angle(-float(pose["right_arm"]), 2)
+    body[17] += _axis_angle(float(pose["left_elbow"]), 1)
+    body[18] += _axis_angle(-float(pose["right_elbow"]), 1)
+    body[3] += _axis_angle(float(pose["left_knee"]), 0)
+    body[4] += _axis_angle(float(pose["right_knee"]), 0)
     body[0, 2] += float(pose["hip_shift"]) * 0.2
     return body.reshape(1, -1)
+
+
+def _apply_body_features(
+    character: dict[str, Any],
+    vertices: np.ndarray,
+    joints: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    vertices = np.asarray(vertices, dtype=np.float32).copy()
+    joints = np.asarray(joints, dtype=np.float32).copy()
+    hip_center = (
+        joints[BODY_JOINT["left_hip"]] + joints[BODY_JOINT["right_hip"]]
+    ) * 0.5
+    spine2_y = float(joints[BODY_JOINT["spine2"], 1])
+    neck_y = float(joints[BODY_JOINT["neck"], 1])
+
+    build_scale = 0.9 + float(character.get("build", 0.5)) * 0.2
+    for values in (vertices, joints):
+        values[:, 0] = hip_center[0] + (values[:, 0] - hip_center[0]) * build_scale
+        values[:, 2] = hip_center[2] + (values[:, 2] - hip_center[2]) * build_scale
+
+    shoulder_scale = 0.86 + float(character.get("shoulder_width", 0.5)) * 0.28
+    shoulder_span = max(neck_y - spine2_y, 1e-6)
+    for values in (vertices, joints):
+        weight = np.clip((values[:, 1] - spine2_y) / shoulder_span, 0, 1)
+        values[:, 0] = hip_center[0] + (
+            values[:, 0] - hip_center[0]
+        ) * (1 + weight * (shoulder_scale - 1))
+
+    leg_scale = 0.85 + float(character.get("leg_length", 0.5)) * 0.3
+    for values in (vertices, joints):
+        below_hips = values[:, 1] < hip_center[1]
+        values[below_hips, 1] = hip_center[1] + (
+            values[below_hips, 1] - hip_center[1]
+        ) * leg_scale
+
+    height_scale = float(character.get("height", 1.0))
+    vertices[:, 1] *= height_scale
+    joints[:, 1] *= height_scale
+    return vertices, joints
 
 
 def _load_smplx(project: dict[str, Any], model_dir: Path):
@@ -91,18 +132,28 @@ def _load_smplx(project: dict[str, Any], model_dir: Path):
         ext=extension,
     )
     with torch.no_grad():
+        pose = project["pose"]
         output = model(
             betas=torch.tensor(betas),
             body_pose=torch.tensor(_smplx_pose(project)),
-            global_orient=torch.zeros((1, 3)),
+            global_orient=torch.tensor(
+                np.radians(_fit(pose.get("smplx_global_orient", []), 3))[None, :],
+                dtype=torch.float32,
+            ),
+            left_hand_pose=torch.tensor(
+                np.radians(_fit(pose.get("smplx_left_hand_pose", []), 45))[None, :],
+                dtype=torch.float32,
+            ),
+            right_hand_pose=torch.tensor(
+                np.radians(_fit(pose.get("smplx_right_hand_pose", []), 45))[None, :],
+                dtype=torch.float32,
+            ),
             transl=torch.tensor([[float(project["pose"]["hip_shift"]) * 0.05, 0, 0]]),
             return_full_pose=True,
         )
     vertices = output.vertices[0].detach().cpu().numpy()
     joints = output.joints[0].detach().cpu().numpy()
-    height_scale = float(character.get("height", 1.0))
-    vertices[:, 1] *= height_scale
-    joints[:, 1] *= height_scale
+    vertices, joints = _apply_body_features(character, vertices, joints)
     floor = float(vertices[:, 1].min())
     vertices[:, 1] -= floor
     joints[:, 1] -= floor
@@ -112,7 +163,10 @@ def _load_smplx(project: dict[str, Any], model_dir: Path):
 def _gnm_expression(model, project: dict[str, Any]) -> np.ndarray:
     pose = project["pose"]
     strength = float(pose.get("expression_strength", 0))
-    expression = np.zeros(model.expression_dim, dtype=np.float32)
+    expression = _fit(
+        pose.get("gnm_expression", []),
+        model.expression_dim,
+    )
     label = str(pose.get("expression", "")).lower()
     tokens = {
         "confidence": ("mouth", "lip", "brow"),
@@ -124,8 +178,30 @@ def _gnm_expression(model, project: dict[str, Any]) -> np.ndarray:
     for index, name in enumerate(model.expression_names):
         lowered = str(name).lower()
         if any(token in lowered for token in wanted):
-            expression[index] = strength * 0.35
+            expression[index] += strength * 0.35
     return expression
+
+
+def _gnm_rotations(model, project: dict[str, Any]) -> np.ndarray:
+    rotations = np.radians(
+        _fit(
+            project["pose"].get("gnm_joint_rotations", []),
+            model.num_joints * 3,
+        ).reshape(model.num_joints, 3)
+    ).astype(np.float32)
+    joint_names = {str(name): index for index, name in enumerate(model.joint_names)}
+    # SMPL-X owns the global neck/head transform. Keep those GNM joints neutral
+    # so advanced coefficient editing cannot double-apply head rotation.
+    for owned_joint in ("neck", "head"):
+        if owned_joint in joint_names:
+            rotations[joint_names[owned_joint]] = 0
+    gaze_x = float(project["pose"].get("gaze_x", 0))
+    gaze_y = float(project["pose"].get("gaze_y", 0))
+    for eye in ("left_eye", "right_eye"):
+        if eye in joint_names:
+            rotations[joint_names[eye], 0] += -gaze_y * 0.32
+            rotations[joint_names[eye], 1] += gaze_x * 0.42
+    return rotations
 
 
 def _orthonormal_head_frame(joints: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
@@ -155,14 +231,7 @@ def _load_gnm(project: dict[str, Any], smplx_joints: np.ndarray):
     identity = _fit(project["character"].get("identity", []), model.identity_dim)
     expression = _gnm_expression(model, project)
     # SMPL-X owns the neck/head transform. GNM only applies local eye rotations.
-    rotations = np.zeros((model.num_joints, 3), dtype=np.float32)
-    joint_names = {str(name): index for index, name in enumerate(model.joint_names)}
-    gaze_x = float(project["pose"].get("gaze_x", 0))
-    gaze_y = float(project["pose"].get("gaze_y", 0))
-    for eye in ("left_eye", "right_eye"):
-        if eye in joint_names:
-            rotations[joint_names[eye], 0] = -gaze_y * 0.32
-            rotations[joint_names[eye], 1] = gaze_x * 0.42
+    rotations = _gnm_rotations(model, project)
     vertices = np.asarray(
         model(
             identity=identity,
@@ -293,6 +362,86 @@ def _trim_smplx_head(
     return faces[along_neck <= float(np.linalg.norm(head - neck)) * 0.48]
 
 
+def _ellipsoid_mesh(
+    trimesh,
+    center: np.ndarray,
+    rotation: np.ndarray,
+    scale: tuple[float, float, float],
+    minimum_local_y: float = -1.0,
+):
+    mesh = trimesh.creation.icosphere(subdivisions=2, radius=1.0)
+    local_vertices = np.asarray(mesh.vertices)
+    if minimum_local_y > -1.0:
+        mesh.update_faces(
+            np.all(local_vertices[np.asarray(mesh.faces)][:, :, 1] >= minimum_local_y, axis=1)
+        )
+        mesh.remove_unreferenced_vertices()
+        local_vertices = np.asarray(mesh.vertices)
+    mesh.vertices = (local_vertices * np.asarray(scale)) @ rotation.T + center
+    return mesh
+
+
+def _appearance_proxy_meshes(trimesh, project: dict[str, Any], joints: np.ndarray):
+    appearance = project["character"]["appearance"]
+    head, rotation, neck_head = _orthonormal_head_frame(joints)
+    y_axis = rotation[:, 1]
+    z_axis = rotation[:, 2]
+    hair_profiles = {
+        "hair_proxy_sculpted_crop": ((1.08, 0.62, 1.0), 0.58, 0.0, -0.2),
+        "hair_proxy_soft_bob": ((1.2, 1.12, 1.08), 0.18, 0.0, -0.82),
+        "hair_proxy_pulled_back": ((1.02, 0.56, 0.96), 0.6, 0.22, -0.18),
+    }
+    hair_scale, hair_y, hair_back, hair_min_y = hair_profiles.get(
+        appearance.get("hair_proxy", "hair_proxy_sculpted_crop"),
+        hair_profiles["hair_proxy_sculpted_crop"],
+    )
+    hair = _ellipsoid_mesh(
+        trimesh,
+        head + y_axis * neck_head * hair_y + z_axis * neck_head * hair_back,
+        rotation,
+        tuple(neck_head * value for value in hair_scale),
+        hair_min_y,
+    )
+    hair.visual.vertex_colors = (42, 33, 30, 255)
+
+    garment = None
+    garment_proxy = appearance.get("garment_proxy", "garment_proxy_studio_black")
+    if garment_proxy != "garment_proxy_studio_black":
+        left_shoulder = joints[BODY_JOINT["left_shoulder"]]
+        right_shoulder = joints[BODY_JOINT["right_shoulder"]]
+        left_hip = joints[BODY_JOINT["left_hip"]]
+        right_hip = joints[BODY_JOINT["right_hip"]]
+        shoulder_center = (left_shoulder + right_shoulder) * 0.5
+        hip_center = (left_hip + right_hip) * 0.5
+        x_axis = _normalize(right_shoulder - left_shoulder)
+        torso_y = _normalize(shoulder_center - hip_center)
+        torso_z = _normalize(np.cross(x_axis, torso_y))
+        x_axis = _normalize(np.cross(torso_y, torso_z))
+        center = (shoulder_center + hip_center) * 0.5
+        shoulder_width = float(np.linalg.norm(right_shoulder - left_shoulder))
+        torso_height = float(np.linalg.norm(shoulder_center - hip_center))
+        profiles = {
+            "garment_proxy_field_jacket": (1.22, 1.08, 0.58),
+            "garment_proxy_bone_tailoring": (1.08, 0.98, 0.46),
+        }
+        width_scale, height_scale, depth_scale = profiles.get(
+            garment_proxy,
+            profiles["garment_proxy_bone_tailoring"],
+        )
+        transform = np.eye(4)
+        transform[:3, :3] = np.stack([x_axis, torso_y, torso_z], axis=1)
+        transform[:3, 3] = center
+        garment = trimesh.creation.box(
+            extents=(
+                shoulder_width * width_scale,
+                torso_height * height_scale,
+                shoulder_width * depth_scale,
+            ),
+            transform=transform,
+        )
+    return hair, garment
+
+
 def _hex_rgb(value: str) -> tuple[int, int, int]:
     text = value.lstrip("#")
     return tuple(int(text[index : index + 2], 16) for index in (0, 2, 4))
@@ -418,6 +567,9 @@ def evaluate(project: dict[str, Any], model_dir: Path, output_dir: Path) -> dict
         process=False,
         vertex_colors=(*skin_color, 255),
     )
+    hair_mesh, garment_mesh = _appearance_proxy_meshes(trimesh, project, joints)
+    if garment_mesh is not None:
+        garment_mesh.visual.vertex_colors = (*outfit_color, 255)
     scene = trimesh.Scene()
     scene.add_geometry(body_mesh, node_name="smplx_body", geom_name="smplx_body")
     scene.add_geometry(head_mesh, node_name="gnm_head", geom_name="gnm_head")
@@ -426,17 +578,34 @@ def evaluate(project: dict[str, Any], model_dir: Path, output_dir: Path) -> dict
         node_name="neck_connector",
         geom_name="neck_connector",
     )
+    scene.add_geometry(hair_mesh, node_name="hair_proxy", geom_name="hair_proxy")
+    if garment_mesh is not None:
+        scene.add_geometry(
+            garment_mesh,
+            node_name="garment_proxy",
+            geom_name="garment_proxy",
+        )
     glb_path = output_dir / "character.glb"
     glb_path.write_bytes(scene.export(file_type="glb"))
     width = int(project["render"]["width"])
     height = int(project["render"]["height"])
+    conditioning_meshes = [
+        (body_vertices, body_faces, outfit_color),
+        (head_vertices, np.asarray(gnm_model.triangles, dtype=np.int64), skin_color),
+        (connector_vertices, connector_faces, skin_color),
+        (np.asarray(hair_mesh.vertices), np.asarray(hair_mesh.faces), (42, 33, 30)),
+    ]
+    if garment_mesh is not None:
+        conditioning_meshes.append(
+            (
+                np.asarray(garment_mesh.vertices),
+                np.asarray(garment_mesh.faces),
+                outfit_color,
+            )
+        )
     rgb_path, depth_path = _render_conditioning(
         project,
-        [
-            (body_vertices, body_faces, outfit_color),
-            (head_vertices, np.asarray(gnm_model.triangles, dtype=np.int64), skin_color),
-            (connector_vertices, connector_faces, skin_color),
-        ],
+        conditioning_meshes,
         output_dir,
         width,
         height,

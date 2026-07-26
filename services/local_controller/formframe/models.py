@@ -15,13 +15,20 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
 
 
+def coefficients(length: int, seed: List[float] | None = None) -> List[float]:
+    values = list(seed or [])
+    return (values + [0.0] * length)[:length]
+
+
 class Appearance(BaseModel):
     apparent_age: int = Field(default=32, ge=18, le=90)
     skin_tone: str = "#B9795B"
     skin_description: str = "warm medium skin with natural texture"
     hair_style: str = "Sculpted crop"
+    hair_proxy: str = "hair_proxy_sculpted_crop"
     hair_description: str = "short dark sculpted hair"
     outfit: str = "Studio black"
+    garment_proxy: str = "garment_proxy_studio_black"
     outfit_prompt: str = "minimal black fitted studio outfit"
 
 
@@ -36,9 +43,16 @@ class ReferenceImage(BaseModel):
 
 class CharacterState(BaseModel):
     character_id: str = Field(default_factory=lambda: new_id("character"))
+    preset: str = "Mara / Studio"
     name: str = "Mara"
-    identity: List[float] = Field(default_factory=lambda: [0.04, -0.11, 0.08])
-    body_shape: List[float] = Field(default_factory=lambda: [0.15, -0.07, 0.03])
+    identity: List[float] = Field(
+        default_factory=lambda: coefficients(253, [0.04, -0.11, 0.08]),
+        max_length=253,
+    )
+    body_shape: List[float] = Field(
+        default_factory=lambda: coefficients(10, [0.15, -0.07, 0.03]),
+        max_length=10,
+    )
     height: float = Field(default=1.0, ge=0.85, le=1.15)
     build: float = Field(default=0.48, ge=0, le=1)
     shoulder_width: float = Field(default=0.52, ge=0, le=1)
@@ -63,6 +77,30 @@ class PoseState(BaseModel):
     expression_strength: float = Field(default=0.38, ge=0, le=1)
     gaze_x: float = Field(default=0.08, ge=-1, le=1)
     gaze_y: float = Field(default=0.02, ge=-1, le=1)
+    gnm_expression: List[float] = Field(
+        default_factory=lambda: coefficients(383),
+        max_length=383,
+    )
+    gnm_joint_rotations: List[float] = Field(
+        default_factory=lambda: coefficients(12),
+        max_length=12,
+    )
+    smplx_global_orient: List[float] = Field(
+        default_factory=lambda: coefficients(3),
+        max_length=3,
+    )
+    smplx_body_pose: List[float] = Field(
+        default_factory=lambda: coefficients(63),
+        max_length=63,
+    )
+    smplx_left_hand_pose: List[float] = Field(
+        default_factory=lambda: coefficients(45),
+        max_length=45,
+    )
+    smplx_right_hand_pose: List[float] = Field(
+        default_factory=lambda: coefficients(45),
+        max_length=45,
+    )
 
 
 class SceneState(BaseModel):

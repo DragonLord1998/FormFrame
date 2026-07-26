@@ -45,6 +45,15 @@ the real backend:
 ./scripts/test-all.sh
 ```
 
+Each exported job writes a deterministic `conditioning-contact-sheet.png` beside
+the `.ffjob` bundle and records its hash under `output.local_validation` in the
+job manifest. That sheet is local conditioning evidence only. To prepare an A-F
+live A100 comparison manifest, run:
+
+```bash
+python scripts/create-comparison-matrix.py --manifest path/to/jobs/<job_id>/manifest.json
+```
+
 ## Implemented path
 
 - Local character, body, scene, camera, and render controls
@@ -54,8 +63,11 @@ the real backend:
 - Real GNM v3 + SMPL-X worker, cached GLB export, and Babylon.js GLB display
 - Explicit pose ownership: SMPL-X owns body/global head pose; GNM owns identity
   and local expression
-- Project persistence on the Mac
+- Project persistence on the Mac with character, expression, outfit, hair-proxy,
+  and coarse garment-proxy selections
 - Conditioning Contract v1 asset generation
+- Local RGB/depth/pose/optional-normal conditioning contact-sheet validation
+- Pending A-F comparison-matrix scaffold for later live A100 benchmark evidence
 - Content hashes and ZIP-storage `.ffjob` bundles
 - Immutable `controlled-character-v1` workflow identifier
 - Official Colab CLI A100 creation/reconnect, probe, upload/download, bootstrap,
@@ -70,6 +82,8 @@ the real backend:
 - Immutable two-pass pose-then-depth ComfyUI API workflow
 - `FormFrameJobLoader` and `FormFrameResultSaver` custom nodes
 - Runtime lifecycle, queue, progress, cancellation, preview/result endpoints
+- One-shot Colab session recovery and pinned-runtime rehydration before a failed
+  render is surfaced
 - Render history and reproducibility metadata
 
 ## Security and licensing

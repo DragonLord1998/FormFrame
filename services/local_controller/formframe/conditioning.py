@@ -5,7 +5,7 @@ import json
 import shutil
 import zipfile
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, Sequence, Tuple
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_PATH = REPO_ROOT / "comfy" / "workflows" / "controlled-character-v1.api.json"
 MODEL_MANIFEST_PATH = REPO_ROOT / "backend" / "colab" / "model-manifest.json"
 GEOMETRY_PROVIDER = ProceduralGuideGeometry()
+BENCHMARK_VARIANTS = ("A", "B", "C", "D", "E", "F")
 
 
 def sha256(path: Path) -> str:
@@ -113,7 +114,15 @@ def _draw_rgb(project: Project, output: Path, geometry: GeometryProvider) -> Non
     points = geometry.projected_joints(project, width, height)
     floor_y = height * 0.84
     draw.ellipse((width * 0.23, floor_y - 12, width * 0.77, floor_y + 32), fill=(20, 18, 16, 65))
-    outfit = (35, 36, 38, 255) if project.character.appearance.outfit == "Studio black" else (96, 75, 55, 255)
+    outfit_colors = {
+        "Studio black": (35, 36, 38, 255),
+        "Field jacket": (74, 85, 64, 255),
+        "Bone tailoring": (212, 199, 178, 255),
+    }
+    outfit = outfit_colors.get(
+        project.character.appearance.outfit,
+        outfit_colors["Studio black"],
+    )
     skin_hex = project.character.appearance.skin_tone.lstrip("#")
     skin = tuple(int(skin_hex[index:index + 2], 16) for index in (0, 2, 4)) + (255,)
     limb_width = max(18, width // 30)
@@ -124,16 +133,39 @@ def _draw_rgb(project: Project, output: Path, geometry: GeometryProvider) -> Non
         ("right_hip", "right_knee"), ("right_knee", "right_ankle"),
     ]:
         draw.line([points[start], points[end]], fill=outfit, width=limb_width, joint="curve")
+    proxy_margin = {
+        "garment_proxy_studio_black": 0,
+        "garment_proxy_field_jacket": max(10, width // 45),
+        "garment_proxy_bone_tailoring": max(6, width // 70),
+    }.get(project.character.appearance.garment_proxy, 0)
     torso_polygon = [
-        points["left_shoulder"], points["right_shoulder"],
-        points["right_hip"], points["left_hip"],
+        (points["left_shoulder"][0] - proxy_margin, points["left_shoulder"][1]),
+        (points["right_shoulder"][0] + proxy_margin, points["right_shoulder"][1]),
+        (points["right_hip"][0] + proxy_margin // 2, points["right_hip"][1]),
+        (points["left_hip"][0] - proxy_margin // 2, points["left_hip"][1]),
     ]
     draw.polygon(torso_polygon, fill=outfit)
     head = points["head"]
     head_radius = max(26, width // 15)
     draw.ellipse((head[0] - head_radius, head[1] - head_radius * 1.13, head[0] + head_radius, head[1] + head_radius * 1.13), fill=skin)
     hair = (32, 25, 22, 255)
-    draw.pieslice((head[0] - head_radius * 1.06, head[1] - head_radius * 1.25, head[0] + head_radius * 1.06, head[1] + head_radius * 0.45), 180, 360, fill=hair)
+    hair_shape = {
+        "hair_proxy_sculpted_crop": (1.06, 1.25, 1.06, 0.45),
+        "hair_proxy_soft_bob": (1.24, 1.2, 1.24, 1.02),
+        "hair_proxy_pulled_back": (1.02, 1.2, 1.18, 0.5),
+    }.get(project.character.appearance.hair_proxy, (1.06, 1.25, 1.06, 0.45))
+    left_scale, top_scale, right_scale, bottom_scale = hair_shape
+    draw.pieslice(
+        (
+            head[0] - head_radius * left_scale,
+            head[1] - head_radius * top_scale,
+            head[0] + head_radius * right_scale,
+            head[1] + head_radius * bottom_scale,
+        ),
+        180,
+        360,
+        fill=hair,
+    )
     image = ImageEnhance.Contrast(image).enhance(1.06)
     image.save(output, "WEBP", quality=92, method=4)
 
@@ -155,6 +187,63 @@ def _create_preview(rgb_path: Path, preview_path: Path, final_path: Path, projec
     preview.save(preview_path, "WEBP", quality=84, method=4)
 
 
+def _create_contact_sheet(passes: Sequence[tuple[str, Path]], output: Path) -> None:
+    images = [(label, Image.open(path).convert("RGB")) for label, path in passes]
+    if not images:
+        raise ValueError("At least one conditioning pass is required")
+    width, height = images[0][1].size
+    if any(image.size != (width, height) for _, image in images):
+        raise ValueError("Conditioning passes must share dimensions")
+
+    label_height = max(24, height // 28)
+    sheet = Image.new("RGB", (width * len(images), height + label_height), (18, 18, 18))
+    draw = ImageDraw.Draw(sheet)
+    for index, (label, image) in enumerate(images):
+        x = index * width
+        sheet.paste(image, (x, label_height))
+        draw.rectangle((x, 0, x + width - 1, label_height - 1), fill=(18, 18, 18))
+        draw.text((x + 12, max(5, label_height // 2 - 5)), label.upper(), fill=(244, 235, 214))
+    sheet.save(output, "PNG", optimize=True)
+
+
+def build_comparison_matrix_manifest(
+    job_manifest: Dict[str, object],
+    *,
+    variants: Sequence[str] = BENCHMARK_VARIANTS,
+) -> Dict[str, object]:
+    return {
+        "schema_version": 1,
+        "kind": "formframe-a100-comparison-matrix",
+        "workflow": WORKFLOW_ID,
+        "source_job_id": job_manifest["job_id"],
+        "source_project_id": job_manifest["project_id"],
+        "conditioning_contract": job_manifest["schema_version"],
+        "evidence_boundary": (
+            "Local conditioning previews and contact sheets validate exported controls only; "
+            "comparison rows are not live render evidence until populated from an A100 result manifest."
+        ),
+        "required_live_evidence": [
+            "a100_result_manifest",
+            "result_png_sha256",
+            "preview_webp_sha256",
+            "runtime_gpu_probe",
+            "workflow_hash",
+            "model_manifest_sha256",
+        ],
+        "variants": [
+            {
+                "variant": variant,
+                "status": "pending-live-a100",
+                "a100_result_manifest": None,
+                "result_png_sha256": None,
+                "preview_webp_sha256": None,
+                "notes": "",
+            }
+            for variant in variants
+        ],
+    }
+
+
 def export_job(
     project: Project,
     job: RenderJob,
@@ -168,20 +257,30 @@ def export_job(
     rgb_path = job_dir / "rgb.webp"
     depth_path = job_dir / "depth.png"
     pose_path = job_dir / "pose.png"
+    normal_path = job_dir / "normal.png"
+    contact_sheet_path = job_dir / "conditioning-contact-sheet.png"
     preview_path = job_dir / "preview.webp"
     final_path = job_dir / "result.png"
+    if normal_path.is_file():
+        normal_path.unlink()
     authoritative_passes = geometry.conditioning_passes(project)
     if authoritative_passes:
         shutil.copy2(authoritative_passes["rgb"], rgb_path)
         shutil.copy2(authoritative_passes["depth"], depth_path)
+        if authoritative_passes.get("normal"):
+            shutil.copy2(authoritative_passes["normal"], normal_path)
     else:
         _draw_rgb(project, rgb_path, geometry)
         _draw_depth(project, depth_path, geometry)
     _draw_pose(project, pose_path, geometry)
+    conditioning_passes = [("rgb", rgb_path), ("depth", depth_path), ("pose", pose_path)]
+    if normal_path.is_file():
+        conditioning_passes.append(("normal", normal_path))
+    _create_contact_sheet(conditioning_passes, contact_sheet_path)
     if create_local_result:
         _create_preview(rgb_path, preview_path, final_path, project)
     assets = {}
-    for key, path in (("rgb", rgb_path), ("depth", depth_path), ("pose", pose_path)):
+    for key, path in conditioning_passes:
         assets[key] = {"path": path.name, "sha256": sha256(path), "bytes": path.stat().st_size}
     reference_paths: list[Path] = []
     reference_assets: list[dict[str, object]] = []
@@ -244,14 +343,27 @@ def export_job(
             ),
         },
         "assets": assets,
-        "output": {"preview_format": "webp", "final_format": "png"},
+        "output": {
+            "preview_format": "webp",
+            "final_format": "png",
+            "local_validation": {
+                "path": contact_sheet_path.name,
+                "sha256": sha256(contact_sheet_path),
+                "bytes": contact_sheet_path.stat().st_size,
+                "passes": [label for label, _ in conditioning_passes],
+                "evidence_scope": "local-conditioning-export-only",
+            },
+        },
         "provider": job.provider,
     }
     manifest_path = job_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
     bundle_path = job_dir / f"{job.job_id}.ffjob"
     with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_STORED) as archive:
-        for path in (manifest_path, rgb_path, depth_path, pose_path, *reference_paths):
+        bundle_inputs = [manifest_path, rgb_path, depth_path, pose_path]
+        if normal_path.is_file():
+            bundle_inputs.append(normal_path)
+        for path in (*bundle_inputs, *reference_paths):
             archive.write(path, path.name)
     return bundle_path, manifest, preview_path, final_path
 

@@ -14,11 +14,12 @@
     Sparkles
   } from "@lucide/svelte";
   import { api, connectEvents } from "./lib/api.js";
+  import BodyStudio from "./lib/BodyStudio.svelte";
   import ExpressionStudio from "./lib/ExpressionStudio.svelte";
   import Inspector from "./lib/Inspector.svelte";
   import RenderHistory from "./lib/RenderHistory.svelte";
   import Viewport from "./lib/Viewport.svelte";
-  import { newProject } from "./lib/project.js";
+  import { newProject, normalizeProject } from "./lib/project.js";
 
   const modes = [
     { label: "Character", icon: CircleUserRound },
@@ -28,7 +29,7 @@
   ];
 
   let mode = "Character";
-  let project = newProject();
+  let project = normalizeProject(newProject());
   let runtime = {
     status: "offline",
     label: "Offline",
@@ -43,6 +44,7 @@
   let geometryUrl = "";
   let geometryTimer;
   let uploadingReference = "";
+  let bodyStudioOpen = false;
   let expressionStudioOpen = false;
 
   $: rendering = jobs.some((job) => ["queued", "freezing", "exporting", "packaging", "rendering"].includes(job.status));
@@ -67,8 +69,8 @@
       ]);
       runtime = health;
       jobs = existingJobs;
-      if (projects.length) project = projects[0];
-      else project = await api.createProject(project);
+      if (projects.length) project = normalizeProject(projects[0]);
+      else project = normalizeProject(await api.createProject(project));
     } catch (error) {
       notice = `Controller unavailable: ${error.message}`;
     }
@@ -100,7 +102,7 @@
     saving = true;
     notice = "";
     try {
-      project = await api.saveProject(project);
+      project = normalizeProject(await api.saveProject(project));
       notice = "Project saved locally";
       window.setTimeout(() => (notice = ""), 2200);
     } catch (error) {
@@ -231,9 +233,17 @@
       onRender={renderFrame}
       onReference={addReference}
       onRemoveReference={removeReference}
+      onOpenBody={() => (bodyStudioOpen = true)}
       onOpenExpression={() => (expressionStudioOpen = true)}
     />
   </main>
+
+  {#if bodyStudioOpen}
+    <BodyStudio
+      bind:project
+      onClose={() => (bodyStudioOpen = false)}
+    />
+  {/if}
 
   {#if expressionStudioOpen}
     <ExpressionStudio

@@ -170,6 +170,16 @@ export function createStudioScene(canvas) {
     "Field jacket": "#4A5540",
     "Bone tailoring": "#D4C7B2"
   };
+  const hairProfiles = {
+    "Sculpted crop": { position: [0, 0.3, 0], scale: [0.91, 0.72, 0.93] },
+    "Soft bob": { position: [0, 0.18, 0], scale: [1.08, 1.12, 1.04] },
+    "Pulled back": { position: [0, 0.31, 0.1], scale: [0.88, 0.68, 1.06] }
+  };
+  const garmentProfiles = {
+    "Studio black": { torsoX: 0, torsoZ: 0, pelvisX: 0 },
+    "Field jacket": { torsoX: 0.16, torsoZ: 0.13, pelvisX: 0.08 },
+    "Bone tailoring": { torsoX: 0.09, torsoZ: 0.07, pelvisX: 0.04 }
+  };
 
   function update(project) {
     const { character, pose, scene: sceneState } = project;
@@ -177,9 +187,10 @@ export function createStudioScene(canvas) {
     root.position.x = pose.hip_shift * 0.24;
     pelvis.rotation.z = radians(pose.hip_shift * -15);
     torsoJoint.rotation.y = radians(pose.torso_twist);
-    torso.scaling.x = 0.9 + character.shoulder_width * 0.28;
-    torso.scaling.z = 0.62 + character.build * 0.22;
-    pelvisMesh.scaling.x = 0.92 + character.build * 0.35;
+    const garment = garmentProfiles[character.appearance.outfit] || garmentProfiles["Studio black"];
+    torso.scaling.x = 0.9 + character.shoulder_width * 0.28 + garment.torsoX;
+    torso.scaling.z = 0.62 + character.build * 0.22 + garment.torsoZ;
+    pelvisMesh.scaling.x = 0.92 + character.build * 0.35 + garment.pelvisX;
     headJoint.rotation.y = radians(pose.head_turn);
     headJoint.rotation.z = radians(pose.head_tilt);
     jaw.scaling.y = 0.48 + pose.expression_strength * 0.18;
@@ -197,6 +208,9 @@ export function createStudioScene(canvas) {
     rightIris.position.y = 0.26 + pose.gaze_y * 0.014;
     skinMaterial.diffuseColor = Color3.FromHexString(character.appearance.skin_tone);
     outfitMaterial.diffuseColor = Color3.FromHexString(outfits[character.appearance.outfit] || outfits["Studio black"]);
+    const hairProfile = hairProfiles[character.appearance.hair_style] || hairProfiles["Sculpted crop"];
+    hair.position = new Vector3(...hairProfile.position);
+    hair.scaling = new Vector3(...hairProfile.scale);
     const [background, floorColor] = backgrounds[sceneState.background] || backgrounds["Warm seamless"];
     scene.clearColor = Color4.FromHexString(`${background}FF`);
     floorMaterial.diffuseColor = Color3.FromHexString(floorColor);

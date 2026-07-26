@@ -6,6 +6,8 @@ from typing import Dict, Literal, Set
 
 from fastapi import WebSocket
 
+from bridge.colab_cli import ColabCliError
+
 from .conditioning import export_job
 from .config import FormFrameSettings
 from .geometry import GnmSmplxGeometry, ProceduralGuideGeometry
@@ -276,9 +278,8 @@ class RuntimeManager:
                         asyncio.run_coroutine_threadsafe(self._broadcast_job(job), loop)
 
                     assert self._remote is not None
-                    remote_result = await asyncio.to_thread(
-                        self._remote.render,
-                        job.job_id,
+                    remote_result = await self._render_remote_with_recovery(
+                        job,
                         bundle,
                         self.store.root / "jobs" / job.job_id,
                         remote_progress,
@@ -316,6 +317,68 @@ class RuntimeManager:
                     self.snapshot.label = "A100 ready" if self.snapshot.provider == "colab" else "Ready"
                 self.snapshot.queue_size = len([j for j in self.jobs.values() if j.status == "queued"])
                 await self.broker.broadcast({"type": "runtime", "runtime": self.snapshot.model_dump(mode="json")})
+
+    async def _render_remote_with_recovery(
+        self,
+        job: RenderJob,
+        bundle: Path,
+        local_job_dir: Path,
+        remote_progress,
+    ):
+        assert self._remote is not None
+        try:
+            return await asyncio.to_thread(
+                self._remote.render,
+                job.job_id,
+                bundle,
+                local_job_dir,
+                remote_progress,
+            )
+        except ColabCliError:
+            if job.status == "cancelled":
+                raise
+        self.snapshot.status = "recovering"
+        self.snapshot.label = "Recovering A100"
+        self.snapshot.progress = 68
+        self.snapshot.detail = "The Colab session disappeared; reconnecting and restoring the pinned runtime once."
+        await self.broker.broadcast(
+            {"type": "runtime", "runtime": self.snapshot.model_dump(mode="json")}
+        )
+        job.stage = "Recovering A100 runtime"
+        job.updated_at = utc_now()
+        self.store.save_job(job)
+        await self._broadcast_job(job)
+        loop = asyncio.get_running_loop()
+
+        def recovery_progress(status: str, label: str, percent: int, detail: str) -> None:
+            self.snapshot.status = "recovering"
+            self.snapshot.label = label
+            self.snapshot.progress = percent
+            self.snapshot.detail = detail
+            asyncio.run_coroutine_threadsafe(
+                self.broker.broadcast(
+                    {"type": "runtime", "runtime": self.snapshot.model_dump(mode="json")}
+                ),
+                loop,
+            )
+
+        await asyncio.to_thread(self._remote.start, recovery_progress)
+        if job.status == "cancelled":
+            raise ColabCliError("Render was cancelled during runtime recovery")
+        self.snapshot.status = "rendering"
+        self.snapshot.label = "A100 restored"
+        self.snapshot.progress = 72
+        self.snapshot.detail = "Pinned runtime restored; retrying the immutable job bundle once."
+        await self.broker.broadcast(
+            {"type": "runtime", "runtime": self.snapshot.model_dump(mode="json")}
+        )
+        return await asyncio.to_thread(
+            self._remote.render,
+            job.job_id,
+            bundle,
+            local_job_dir,
+            remote_progress,
+        )
 
     async def _broadcast_job(self, job: RenderJob) -> None:
         await self.broker.broadcast({"type": "job", "job": job.model_dump(mode="json")})

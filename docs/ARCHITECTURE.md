@@ -36,6 +36,8 @@ real SMPL-X joints. The main viewport composes all three meshes. The modal GNM
 Expression Studio isolates `gnm_head` for facial direction without claiming
 that GNM and SMPL-X share or can be remeshed into one topology. SMPL-X owns
 global head orientation; GNM contributes identity, local expression, and gaze.
+Selected hair and loose-outfit entries add separate coarse proxy meshes; they
+change the conditioning silhouette without modifying either licensed topology.
 
 The production runtime adapter must:
 
@@ -49,6 +51,10 @@ The production runtime adapter must:
 7. accept only Conditioning Contract v1 bundles and whitelisted parameters;
 8. run a real fixed-workflow warmup before reporting ready;
 9. fall back to CLI submission when the live control channel fails.
+
+If the named Colab session disappears during a render, the local runtime manager
+performs one bounded reconnect/rehydration attempt and retries the same immutable
+bundle once. It never loops indefinitely.
 
 Transfer routing is measured per active session. Bulk payloads stay on Colab
 CLI: bootstrap secrets, `.ffjob` bundles, reusable asset-cache misses, and final

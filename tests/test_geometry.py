@@ -20,6 +20,65 @@ def test_geometry_provider_is_deterministic_and_fail_closed():
         UnconfiguredModelGeometry().projected_joints(project, 768, 1024)
 
 
+def test_full_gnm_and_smplx_coefficient_vectors_reach_geometry_math():
+    worker_python = Path("data/geometry-venv/bin/python")
+    if not worker_python.is_file():
+        pytest.skip("isolated geometry environment is not installed")
+    project = Project()
+    project.pose.expression = "Surprised"
+    project.pose.expression_strength = 1
+    project.pose.gnm_expression[0] = 0.5
+    project.pose.gnm_expression[17] = 0.75
+    project.pose.gnm_joint_rotations[0] = 30
+    project.pose.gnm_joint_rotations[6] = 10
+    project.pose.gnm_joint_rotations[7] = 5
+    project.pose.gaze_x = 0.25
+    project.pose.gaze_y = 0.5
+    project.pose.smplx_body_pose[0] = 15
+    project.pose.smplx_body_pose[62] = -22
+    script = r"""
+import json
+import sys
+
+from services.geometry_worker.main import _gnm_expression, _gnm_rotations, _smplx_pose
+
+class FakeGnm:
+    expression_dim = 383
+    expression_names = ["surprise_eye", *[f"basis_{index:03d}" for index in range(1, 383)]]
+    num_joints = 4
+    joint_names = ["neck", "head", "left_eye", "right_eye"]
+
+project = json.loads(sys.argv[1])
+expression = _gnm_expression(FakeGnm(), project)
+rotations = _gnm_rotations(FakeGnm(), project)
+body_pose = _smplx_pose(project).reshape(21, 3)
+print(json.dumps({
+    "expression_size": int(expression.size),
+    "expression_0": float(expression[0]),
+    "expression_17": float(expression[17]),
+    "neck_rotation": rotations[0].tolist(),
+    "left_eye_rotation": rotations[2].tolist(),
+    "body_first": float(body_pose[0, 0]),
+    "body_last": float(body_pose[20, 2]),
+}))
+"""
+    completed = subprocess.run(
+        [str(worker_python), "-c", script, project.model_dump_json()],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["expression_size"] == 383
+    assert result["expression_0"] == pytest.approx(0.85)
+    assert result["expression_17"] == pytest.approx(0.75)
+    assert result["neck_rotation"] == pytest.approx([0, 0, 0])
+    assert result["left_eye_rotation"][0] == pytest.approx(0.0145329, rel=1e-5)
+    assert result["left_eye_rotation"][1] == pytest.approx(0.192266, rel=1e-5)
+    assert result["body_first"] == pytest.approx(0.261799, rel=1e-5)
+    assert result["body_last"] == pytest.approx(-0.383972, rel=1e-5)
+
+
 def test_geometry_worker_accepts_smplx_leaf_or_parent_layout(tmp_path: Path):
     worker_python = Path("data/geometry-venv/bin/python")
     if not worker_python.is_file():
@@ -135,3 +194,103 @@ print(json.dumps({
     assert result["rgb_size"] == [512, 512]
     assert result["depth_size"] == [512, 512]
     assert result["depth_max"] > 0
+
+
+def test_geometry_worker_builds_selected_hair_and_garment_proxies():
+    worker_python = Path("data/geometry-venv/bin/python")
+    if not worker_python.is_file():
+        pytest.skip("isolated geometry environment is not installed")
+    project = Project()
+    project.character.appearance.hair_proxy = "hair_proxy_soft_bob"
+    project.character.appearance.garment_proxy = "garment_proxy_field_jacket"
+    script = r"""
+import json
+import sys
+
+import numpy as np
+import trimesh
+
+from services.geometry_worker.main import BODY_JOINT, _appearance_proxy_meshes
+
+project = json.loads(sys.argv[1])
+joints = np.zeros((22, 3), dtype=np.float32)
+joints[BODY_JOINT["left_hip"]] = (-0.18, 0.95, 0)
+joints[BODY_JOINT["right_hip"]] = (0.18, 0.95, 0)
+joints[BODY_JOINT["neck"]] = (0, 1.62, 0)
+joints[BODY_JOINT["head"]] = (0, 1.82, 0)
+joints[BODY_JOINT["left_shoulder"]] = (-0.32, 1.56, 0)
+joints[BODY_JOINT["right_shoulder"]] = (0.32, 1.56, 0)
+hair, garment = _appearance_proxy_meshes(trimesh, project, joints)
+print(json.dumps({
+    "hair_vertices": int(len(hair.vertices)),
+    "garment_vertices": int(len(garment.vertices)),
+    "hair_height": float(hair.extents[1]),
+    "garment_width": float(garment.extents[0]),
+}))
+"""
+    completed = subprocess.run(
+        [str(worker_python), "-c", script, project.model_dump_json()],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["hair_vertices"] > 100
+    assert result["garment_vertices"] == 8
+    assert result["hair_height"] > 0.4
+    assert result["garment_width"] > 0.7
+
+
+def test_body_feature_controls_modify_real_geometry_coordinates():
+    worker_python = Path("data/geometry-venv/bin/python")
+    if not worker_python.is_file():
+        pytest.skip("isolated geometry environment is not installed")
+    script = r"""
+import json
+
+import numpy as np
+
+from services.geometry_worker.main import BODY_JOINT, _apply_body_features
+
+joints = np.zeros((22, 3), dtype=np.float32)
+joints[BODY_JOINT["left_hip"]] = (-0.2, 1.0, 0)
+joints[BODY_JOINT["right_hip"]] = (0.2, 1.0, 0)
+joints[BODY_JOINT["spine2"]] = (0, 1.35, 0)
+joints[BODY_JOINT["neck"]] = (0, 1.7, 0)
+joints[BODY_JOINT["left_shoulder"]] = (-0.3, 1.62, 0)
+joints[BODY_JOINT["right_shoulder"]] = (0.3, 1.62, 0)
+vertices = np.asarray([
+    [-0.3, 1.62, 0.15],
+    [0.3, 1.62, -0.15],
+    [-0.15, 0.0, 0.1],
+    [0.15, 0.0, -0.1],
+], dtype=np.float32)
+base_vertices, _ = _apply_body_features(
+    {"height": 1, "build": 0.5, "shoulder_width": 0.5, "leg_length": 0.5},
+    vertices,
+    joints,
+)
+tuned_vertices, _ = _apply_body_features(
+    {"height": 1.1, "build": 0.9, "shoulder_width": 0.9, "leg_length": 0.9},
+    vertices,
+    joints,
+)
+print(json.dumps({
+    "base_shoulder_width": float(base_vertices[1, 0] - base_vertices[0, 0]),
+    "tuned_shoulder_width": float(tuned_vertices[1, 0] - tuned_vertices[0, 0]),
+    "base_floor": float(base_vertices[2:, 1].min()),
+    "tuned_floor": float(tuned_vertices[2:, 1].min()),
+    "base_depth": float(np.ptp(base_vertices[:, 2])),
+    "tuned_depth": float(np.ptp(tuned_vertices[:, 2])),
+}))
+"""
+    completed = subprocess.run(
+        [str(worker_python), "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["tuned_shoulder_width"] > result["base_shoulder_width"]
+    assert result["tuned_floor"] < result["base_floor"]
+    assert result["tuned_depth"] > result["base_depth"]

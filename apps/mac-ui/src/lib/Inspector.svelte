@@ -1,7 +1,13 @@
 <script>
-  import { ChevronDown, Dice5, Sparkles } from "@lucide/svelte";
+  import { ChevronDown, Dice5, Dumbbell, Sparkles } from "@lucide/svelte";
   import Field from "./Field.svelte";
-  import { posePresets } from "./project.js";
+  import {
+    characterPresets,
+    hairProxyLibrary,
+    normalizeProject,
+    outfitLibrary,
+    posePresets
+  } from "./project.js";
 
   export let mode;
   export let project;
@@ -10,6 +16,7 @@
   export let rendering;
   export let onReference;
   export let onRemoveReference;
+  export let onOpenBody;
   export let onOpenExpression;
   export let uploadingReference = "";
 
@@ -31,6 +38,40 @@
 
   const applyPreset = (name) => {
     project.pose = { ...project.pose, preset: name, ...posePresets[name] };
+    project = project;
+  };
+
+  const applyCharacterPreset = (name) => {
+    const preset = characterPresets[name];
+    project = normalizeProject({
+      ...project,
+      character: {
+        ...project.character,
+        ...preset,
+        preset: name,
+        appearance: {
+          ...project.character.appearance,
+          ...preset.appearance
+        }
+      }
+    });
+  };
+
+  const applyHairProxy = (name) => {
+    project.character.appearance = {
+      ...project.character.appearance,
+      hair_style: name,
+      ...hairProxyLibrary[name]
+    };
+    project = project;
+  };
+
+  const applyOutfit = (name) => {
+    project.character.appearance = {
+      ...project.character.appearance,
+      outfit: name,
+      ...outfitLibrary[name]
+    };
     project = project;
   };
 
@@ -56,11 +97,22 @@
     </div>
     <section class="control-group">
       <h3>Presence</h3>
+      <label class="select-field">Character preset
+        <select bind:value={project.character.preset} on:change={(event) => applyCharacterPreset(event.currentTarget.value)}>
+          {#each Object.keys(characterPresets) as preset}
+            <option value={preset}>{preset}</option>
+          {/each}
+        </select>
+      </label>
       <Field label="Apparent age" bind:value={project.character.appearance.apparent_age} min={18} max={90} step={1} />
       <Field label="Height" bind:value={project.character.height} min={0.85} max={1.15} step={0.01} />
       <Field label="Build" bind:value={project.character.build} />
       <Field label="Shoulders" bind:value={project.character.shoulder_width} />
       <Field label="Leg proportion" bind:value={project.character.leg_length} />
+      <button class="expression-launch" type="button" on:click={onOpenBody}>
+        <Dumbbell size={17} />
+        Open SMPL-X Body Studio
+      </button>
     </section>
     <section class="control-group">
       <h3>Appearance</h3>
@@ -68,13 +120,17 @@
         <span><input type="color" bind:value={project.character.appearance.skin_tone} />{project.character.appearance.skin_tone}</span>
       </label>
       <label class="select-field">Hair
-        <select bind:value={project.character.appearance.hair_style}>
-          <option>Sculpted crop</option><option>Soft bob</option><option>Pulled back</option>
+        <select bind:value={project.character.appearance.hair_style} on:change={(event) => applyHairProxy(event.currentTarget.value)}>
+          {#each Object.keys(hairProxyLibrary) as hair}
+            <option value={hair}>{hair}</option>
+          {/each}
         </select>
       </label>
       <label class="select-field">Guide outfit
-        <select bind:value={project.character.appearance.outfit}>
-          <option>Studio black</option><option>Field jacket</option><option>Bone tailoring</option>
+        <select bind:value={project.character.appearance.outfit} on:change={(event) => applyOutfit(event.currentTarget.value)}>
+          {#each Object.keys(outfitLibrary) as outfit}
+            <option value={outfit}>{outfit}</option>
+          {/each}
         </select>
       </label>
       <label class="text-field">Outfit direction
@@ -130,6 +186,10 @@
       <Field label="Right arm" bind:value={project.pose.right_arm} min={-90} max={90} step={1} unit="°" />
       <Field label="Left elbow" bind:value={project.pose.left_elbow} min={0} max={130} step={1} unit="°" />
       <Field label="Right elbow" bind:value={project.pose.right_elbow} min={0} max={130} step={1} unit="°" />
+      <button class="expression-launch" type="button" on:click={onOpenBody}>
+        <Dumbbell size={17} />
+        Open SMPL-X Body Studio
+      </button>
     </section>
     <section class="control-group">
       <h3>Face & gaze</h3>
