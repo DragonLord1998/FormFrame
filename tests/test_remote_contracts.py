@@ -8,12 +8,17 @@ from pathlib import Path
 import httpx
 import pytest
 
+from backend.colab import bootstrap
 from backend.colab.formframe_gateway.bundle import validate_bundle
 from bridge.cloudflare import CloudflareGateway, GatewayConfig, GatewayError
-from bridge.colab_cli import ColabCli, ColabCliConfig, ColabCliError, parse_probe, require_a100
+from bridge.colab_cli import ColabCli, ColabCliConfig, ColabCliError, _redact, parse_probe, require_a100
 from bridge.runtime_package import RuntimeSecrets, build_runtime_archive, write_runtime_secrets
 from services.local_controller.formframe.config import FormFrameSettings
-from services.local_controller.formframe.remote import ColabRemoteRuntime, _reusable_assets
+from services.local_controller.formframe.remote import (
+    ColabRemoteRuntime,
+    _cli_fallback_source,
+    _reusable_assets,
+)
 
 
 def test_settings_fail_closed_without_external_configuration(monkeypatch):
@@ -54,6 +59,12 @@ def test_colab_cli_uses_argument_array_and_exact_session(tmp_path: Path):
     result = cli.status()
     assert result.returncode == 0
     assert result.stdout.splitlines() == ["--auth", "adc", "status", "-s", "formframe-a100"]
+
+
+def test_colab_cli_redacts_token_flags():
+    assert _redact("cloudflared run --token sensitive-value") == (
+        "cloudflared run --token [REDACTED]"
+    )
 
 
 def test_cloudflare_gateway_sends_service_token_and_only_metadata():
@@ -323,6 +334,60 @@ def test_runtime_package_contains_code_but_secrets_are_separate(tmp_path: Path):
     assert document["github_repo_url"] == "https://github.com/example/formframe.git"
     assert document["github_revision"] == "0123456789abcdef0123456789abcdef01234567"
     assert document["github_token"] == ""
+
+
+def test_cli_fallback_executes_the_pinned_github_checkout():
+    source = _cli_fallback_source(
+        "job_123456789abc",
+        "/content/formframe/inbox/job_123456789abc.ffjob",
+    )
+    assert "/content/formframe/source/backend/colab/submit_cli.py" in source
+    assert "/content/formframe/runtime/" not in source
+
+
+def test_cloudflared_token_is_passed_only_through_environment(monkeypatch, tmp_path: Path):
+    observed = {}
+    executable = tmp_path / "cloudflared"
+    executable.write_text("")
+
+    def fake_start_process(name, command, environment):
+        observed.update(name=name, command=command, environment=environment)
+
+    monkeypatch.setattr(bootstrap, "cloudflared", lambda: executable)
+    monkeypatch.setattr(bootstrap, "start_process", fake_start_process)
+    monkeypatch.setattr(bootstrap, "wait_tunnel_connected", lambda: None)
+    bootstrap.start_tunnel({"tunnel_token": "super-secret"}, {"SAFE": "value"})
+    assert observed["name"] == "cloudflared"
+    assert "super-secret" not in observed["command"]
+    assert "--token" not in observed["command"]
+    assert observed["environment"]["TUNNEL_TOKEN"] == "super-secret"
+    assert observed["environment"]["SAFE"] == "value"
+
+
+def test_tunnel_readiness_requires_registered_connection(monkeypatch, tmp_path: Path):
+    logs = tmp_path / "logs"
+    state = tmp_path / "state"
+    logs.mkdir()
+    state.mkdir()
+    (logs / "cloudflared.log").write_text(
+        "INF Registered tunnel connection connIndex=0\n",
+        encoding="utf-8",
+    )
+    (state / "cloudflared.pid").write_text(str(os.getpid()), encoding="utf-8")
+    monkeypatch.setattr(bootstrap, "LOGS", logs)
+    monkeypatch.setattr(bootstrap, "STATE", state)
+    bootstrap.wait_tunnel_connected(timeout_seconds=1)
+
+
+def test_colab_bootstrap_does_not_install_or_upload_private_geometry():
+    root = Path(__file__).resolve().parents[1]
+    bootstrap_source = (root / "backend" / "colab" / "bootstrap.py").read_text()
+    remote_source = (
+        root / "services" / "local_controller" / "formframe" / "remote.py"
+    ).read_text()
+    assert "install_geometry(" not in bootstrap_source
+    assert "licensed-models" not in remote_source
+    assert "smplx-models.zip" not in remote_source
 
 
 def test_fixed_workflow_runs_pose_then_depth():

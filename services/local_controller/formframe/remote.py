@@ -89,15 +89,13 @@ class ColabRemoteRuntime:
                 ),
                 temporary / "runtime.json",
             )
-            smplx = self._package_smplx(temporary / "smplx-models.zip")
-            progress("installing", "Uploading bootstrap inputs", 27, "Sending source checkout secrets and private model assets")
+            progress("installing", "Uploading bootstrap inputs", 27, "Sending source checkout configuration")
             self.cli.exec_source(
                 """
 from pathlib import Path
 for value in (
     "/content/formframe/bootstrap",
     "/content/formframe/secrets",
-    "/content/formframe/licensed-models",
     "/content/formframe/assets",
 ):
     Path(value).mkdir(parents=True, exist_ok=True)
@@ -105,8 +103,6 @@ for value in (
                 "prepare_directories",
             )
             self.cli.upload(secrets, "/content/formframe/secrets/runtime.json")
-            self.cli.upload(smplx, "/content/formframe/licensed-models/smplx-models.zip")
-            self.cli.exec_source(_extract_smplx_source(), "extract_smplx", timeout_seconds=180)
             progress("restoring", "Restoring model cache", 44, "Installing pinned ComfyUI and model assets")
             bootstrap = self.repo_root / "backend" / "colab" / "bootstrap.py"
             self.cli.exec_file(bootstrap, timeout_seconds=14400)
@@ -162,26 +158,32 @@ for value in (
             "control_route": "cloudflare",
         }
 
-    def _package_smplx(self, destination: Path) -> Path:
-        assert self.settings.smplx_model_dir is not None
-        allowed = list(self.settings.smplx_model_dir.glob("SMPLX_*.npz"))
-        allowed.extend(self.settings.smplx_model_dir.glob("SMPLX_*.pkl"))
-        if not allowed:
-            raise RemoteRuntimeError("No licensed SMPL-X model files were found")
-        with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_STORED) as archive:
-            for path in sorted(set(allowed)):
-                archive.write(path, path.name)
-        return destination
-
-    def _wait_gateway(self, attempts: int = 30) -> dict[str, Any]:
+    def _wait_gateway(self, attempts: int = 90) -> dict[str, Any]:
         last_error = ""
-        for _ in range(attempts):
+        for attempt in range(attempts):
             try:
                 return self.gateway.health()
             except GatewayError as exc:
                 last_error = str(exc)
-                time.sleep(2)
-        raise RemoteRuntimeError(f"Cloudflare gateway did not become reachable: {last_error}")
+                time.sleep(min(5, 1 + attempt // 10))
+        diagnostics = self._cloudflared_log_tail()
+        raise RemoteRuntimeError(
+            "Cloudflare gateway did not become reachable: "
+            f"{last_error}. Remote cloudflared log tail: {diagnostics}"
+        )
+
+    def _cloudflared_log_tail(self) -> str:
+        source = """
+from pathlib import Path
+path = Path("/content/formframe/logs/cloudflared.log")
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []
+print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
+"""
+        try:
+            result = self.cli.exec_source(source, "cloudflared_log_tail", timeout_seconds=60)
+        except ColabCliError as exc:
+            return f"unable to read log ({exc})"
+        return result.stdout.strip() or "cloudflared log is empty"
 
     def render(
         self,
@@ -293,27 +295,6 @@ for value in (
         }
 
 
-def _extract_smplx_source() -> str:
-    return """
-import shutil
-import zipfile
-from pathlib import Path
-
-archive = Path("/content/formframe/licensed-models/smplx-models.zip")
-target = Path("/content/formframe/licensed-models/smplx")
-temporary = target.with_name("smplx.next")
-shutil.rmtree(temporary, ignore_errors=True)
-temporary.mkdir(parents=True)
-with zipfile.ZipFile(archive) as bundle:
-    for name in bundle.namelist():
-        if Path(name).name != name or not name.startswith("SMPLX_"):
-            raise RuntimeError("SMPL-X archive contains an invalid path")
-    bundle.extractall(temporary)
-shutil.rmtree(target, ignore_errors=True)
-temporary.replace(target)
-"""
-
-
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -362,8 +343,8 @@ import os
 import runpy
 import sys
 
-os.environ["PYTHONPATH"] = "/content/formframe/runtime/backend/colab"
-sys.path.insert(0, "/content/formframe/runtime/backend/colab")
+os.environ["PYTHONPATH"] = "/content/formframe/source/backend/colab"
+sys.path.insert(0, "/content/formframe/source/backend/colab")
 sys.argv = [
     "submit_cli.py",
     "--job-id",
@@ -371,5 +352,5 @@ sys.argv = [
     "--bundle",
     {remote_bundle!r},
 ]
-runpy.run_path("/content/formframe/runtime/backend/colab/submit_cli.py", run_name="__main__")
+runpy.run_path("/content/formframe/source/backend/colab/submit_cli.py", run_name="__main__")
 """

@@ -62,8 +62,8 @@ the real backend:
   and CLI execution fallback
 - Colab bootstrap clones the GitHub source repository at an explicit
   revision before installing sources and workflows
-- Measured transfer split: Colab CLI for bootstrap secrets, licensed assets,
-  `.ffjob` bundles, reusable asset-cache misses, and final PNG downloads;
+- Measured transfer split: Colab CLI for bootstrap secrets, `.ffjob` bundles,
+  reusable asset-cache misses, and final PNG downloads;
   Cloudflare for authenticated control, status, progress, and preview delivery
 - Authenticated Cloudflare client and private gateway with Access JWT validation
 - Private ComfyUI supervisor and pinned Z-Image Turbo + ControlNet model manifest
@@ -74,11 +74,11 @@ the real backend:
 
 ## Security and licensing
 
-SMPL-X files remain under the ignored `data/models/smplx` directory and are
-uploaded only to the active private Colab session. They are never committed,
-placed in `.ffjob` bundles, or redistributed. The gateway accepts only the fixed
-FormFrame manifest/workflow contract and never accepts shell commands or
-arbitrary ComfyUI JSON.
+SMPL-X and GNM geometry stay on the Mac under ignored local model directories.
+The exported `.ffjob` contains only derived RGB/depth/pose conditioning, never
+the licensed model files. Those model files are not uploaded, committed, or
+redistributed. The gateway accepts only the fixed FormFrame manifest/workflow
+contract and never accepts shell commands or arbitrary ComfyUI JSON.
 
 Reusable reference assets are negotiated by SHA-256 through the private gateway
 and uploaded through Colab CLI only when the active Colab cache is missing them.

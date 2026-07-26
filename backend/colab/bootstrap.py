@@ -268,25 +268,6 @@ state.mkdir(parents=True, exist_ok=True)
     write_bootstrap_state(manifest, "models-verified")
 
 
-def install_geometry(python: Path, manifest: dict[str, object]) -> None:
-    gnm = manifest["gnm"]
-    gnm_root = ROOT / "gnm"
-    clone_exact(gnm["repository"], gnm["revision"], gnm_root)
-    asset = gnm_root / gnm["asset"]
-    if not asset.is_file() or asset.stat().st_size < 10 * 1024 * 1024:
-        raise RuntimeError("Pinned GNM model asset is missing or incomplete")
-    run([str(python), "-m", "pip", "install", "-e", f"{gnm_root}/gnm/shape[pytorch]"], timeout=1800)
-    run([str(python), "-m", "pip", "install", "smplx", "trimesh"], timeout=900)
-    smplx_target = ROOT / "models" / "smplx"
-    smplx_target.mkdir(parents=True, exist_ok=True)
-    licensed_source = ROOT / "licensed-models" / "smplx"
-    if licensed_source.is_dir():
-        for path in licensed_source.glob("SMPLX_*"):
-            destination = smplx_target / path.name
-            if not destination.exists():
-                destination.symlink_to(path)
-
-
 def cloudflared() -> Path:
     machine = platform.machine().lower()
     architecture = "arm64" if machine in {"aarch64", "arm64"} else "amd64"
@@ -501,11 +482,35 @@ def start_tunnel(secrets: dict[str, str], environment: dict[str, str]) -> None:
     tunnel_token = secrets.get("tunnel_token", "")
     if not tunnel_token:
         raise RuntimeError("A named Cloudflare tunnel token is required")
+    tunnel_environment = environment.copy()
+    tunnel_environment["TUNNEL_TOKEN"] = tunnel_token
     start_process(
         "cloudflared",
-        [str(cloudflared()), "tunnel", "--no-autoupdate", "run", "--token", tunnel_token],
-        environment,
+        [str(cloudflared()), "tunnel", "--no-autoupdate", "run"],
+        tunnel_environment,
     )
+    wait_tunnel_connected()
+
+
+def wait_tunnel_connected(timeout_seconds: int = 180) -> None:
+    """Wait until cloudflared reports a registered edge connection."""
+    log_path = LOGS / "cloudflared.log"
+    pid_path = STATE / "cloudflared.pid"
+    deadline = time.monotonic() + timeout_seconds
+    last_lines: list[str] = []
+    while time.monotonic() < deadline:
+        if pid_path.is_file():
+            try:
+                os.kill(int(pid_path.read_text()), 0)
+            except (ValueError, OSError, ProcessLookupError) as exc:
+                raise RuntimeError("cloudflared exited before registering the tunnel") from exc
+        if log_path.is_file():
+            last_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]
+            if any("registered tunnel connection" in line.lower() for line in last_lines):
+                return
+        time.sleep(2)
+    detail = "\n".join(last_lines[-10:]) or "no cloudflared log output"
+    raise RuntimeError(f"cloudflared did not register the managed tunnel:\n{detail}")
 
 
 def main() -> int:
@@ -518,7 +523,6 @@ def main() -> int:
     python = prepare_environment()
     install_sources(python, manifest)
     download_models(python, manifest)
-    install_geometry(python, manifest)
     workflows = ROOT / "workflows"
     workflows.mkdir(parents=True, exist_ok=True)
     shutil.copy2(

@@ -37,6 +37,7 @@ class CommandResult:
 
 def _redact(value: str) -> str:
     value = value[-MAX_OUTPUT:]
+    value = re.sub(r"(?i)(--(?:tunnel-)?token\s+)\S+", r"\1[REDACTED]", value)
     value = re.sub(
         r"(?i)(authorization|token|client-secret|google_application_credentials)(\s*[:=]\s*)\S+",
         r"\1\2[REDACTED]",
@@ -228,4 +229,3 @@ def require_a100(payload: dict[str, object]) -> None:
         or vram < 35 * 1024**3
     ):
         raise ColabCliError(f"Expected A100 runtime, received {gpu or 'no CUDA GPU'}")
-

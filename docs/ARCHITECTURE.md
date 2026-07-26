@@ -50,14 +50,15 @@ The production runtime adapter must:
 8. run a real fixed-workflow warmup before reporting ready;
 9. fall back to CLI submission when the live control channel fails.
 
-Transfer routing is measured per active session. Large or licensed payloads
-stay on Colab CLI: bootstrap secrets, SMPL-X upload, `.ffjob` bundles, reusable
-asset-cache misses, and final PNG downloads. Cloudflare carries authenticated
-control, status/progress, preview delivery, benchmark echo checks, and
-content-addressed cache checks. GitHub is the source of truth for runtime code;
-credentials are passed only through runtime secrets/environment. The local Mac
-cache records source-revision and model-manifest integrity metadata; it does not
-mirror model weights locally.
+Transfer routing is measured per active session. Bulk payloads stay on Colab
+CLI: bootstrap secrets, `.ffjob` bundles, reusable asset-cache misses, and final
+PNG downloads. Licensed GNM and SMPL-X files remain local; Colab receives only
+their derived conditioning images. Cloudflare carries authenticated control,
+status/progress, preview delivery, benchmark echo checks, and content-addressed
+cache checks. GitHub is the source of truth for runtime code; credentials are
+passed only through runtime secrets/environment. The local Mac cache records
+source-revision and model-manifest integrity metadata; it does not mirror model
+weights locally.
 
 ## Project persistence
 
