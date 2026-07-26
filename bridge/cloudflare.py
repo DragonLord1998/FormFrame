@@ -29,6 +29,10 @@ class GatewayConfig:
         if parsed.scheme != "https" and parsed.hostname not in {"127.0.0.1", "localhost"}:
             raise GatewayError("Remote FormFrame gateways must use HTTPS")
         has_access = bool(self.access_client_id and self.access_client_secret)
+        if self.development_token and len(self.development_token) < 32:
+            raise GatewayError(
+                "Gateway development token must be at least 32 characters"
+            )
         if not has_access and not self.development_token:
             raise GatewayError("Cloudflare Access credentials are not configured")
 

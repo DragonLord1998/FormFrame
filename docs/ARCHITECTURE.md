@@ -22,10 +22,11 @@ FastAPI local controller :8000
 ## Providers
 
 `colab` is the default requested backend. It cannot become ready unless the
-official CLI, an actual A100 probe, licensed geometry assets, the managed
-Cloudflare route, and Access credentials are all configured. `local-preview`
-remains an explicit development provider and is never used as evidence that a
-Colab render succeeded.
+official CLI, an actual A100 probe, and licensed geometry assets are configured.
+The control route can be either a stable managed Cloudflare Tunnel protected by
+Access or an ephemeral Quick Tunnel protected by a fresh per-runtime bearer
+token. `local-preview` remains an explicit development provider and is never
+used as evidence that a Colab render succeeded.
 
 ## Production adapters
 
@@ -47,7 +48,8 @@ The production runtime adapter must:
 3. restore pinned model assets;
 4. bind ComfyUI to `127.0.0.1:8188`;
 5. expose only the FormFrame gateway at `127.0.0.1:8000`;
-6. validate Cloudflare Access JWT issuer and audience;
+6. validate Cloudflare Access JWT issuer/audience in managed mode, or a
+   high-entropy bearer token in Quick Tunnel validation mode;
 7. accept only Conditioning Contract v1 bundles and whitelisted parameters;
 8. run a real fixed-workflow warmup before reporting ready;
 9. fall back to CLI submission when the live control channel fails.
@@ -59,6 +61,12 @@ bundle once. It never loops indefinitely.
 The studio can explicitly stop the configured named Colab session after work is
 finished. The controller refuses stop requests while a render is active and
 never enumerates or terminates unrelated Colab sessions.
+
+Quick Tunnel mode starts `cloudflared tunnel --url http://127.0.0.1:8000`,
+accepts only a strictly validated `https://*.trycloudflare.com` URL from the
+remote bootstrap marker, and disables automatic FastAPI docs/OpenAPI routes.
+The random hostname changes with each runtime and is never treated as a stable
+deployment. The browser still talks only to the local controller.
 
 Transfer routing is measured per active session. Bulk payloads stay on Colab
 CLI: bootstrap secrets, `.ffjob` bundles, reusable asset-cache misses, and final

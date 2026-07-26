@@ -6,6 +6,7 @@ import os
 import platform
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -26,6 +27,9 @@ VIDEOX = ROOT / "VideoX-Fun"
 CACHE = ROOT / "cache"
 BOOTSTRAP_SCHEMA_VERSION = 2
 COMMIT_RE = re.compile(r"^[a-fA-F0-9]{40}$")
+QUICK_TUNNEL_RE = re.compile(
+    r"https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com"
+)
 CLOUDFLARED_VERSION = "2026.7.2"
 CLOUDFLARED_ASSETS = {
     "amd64": (
@@ -328,6 +332,17 @@ def wait_http(url: str, timeout_seconds: int = 300) -> None:
     raise RuntimeError(f"Service did not become ready: {url}")
 
 
+def wait_tcp(host: str, port: int, timeout_seconds: int = 120) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=5):
+                return
+        except OSError:
+            time.sleep(2)
+    raise RuntimeError(f"Service did not bind: {host}:{port}")
+
+
 def runtime_environment(secrets: dict[str, str]) -> dict[str, str]:
     environment = os.environ.copy()
     environment.update(
@@ -337,6 +352,7 @@ def runtime_environment(secrets: dict[str, str]) -> dict[str, str]:
             "FORMFRAME_CF_ACCESS_TEAM_DOMAIN": secrets.get("access_team_domain", ""),
             "FORMFRAME_CF_ACCESS_AUDIENCE": secrets.get("access_audience", ""),
             "FORMFRAME_GATEWAY_DEVELOPMENT_TOKEN": secrets.get("development_token", ""),
+            "FORMFRAME_CF_TUNNEL_MODE": secrets.get("tunnel_mode", "managed"),
             "PYTHONPATH": str(SOURCE / "backend" / "colab"),
         }
     )
@@ -373,7 +389,7 @@ def start_services(python: Path, secrets: dict[str, str]) -> None:
         ],
         environment,
     )
-    wait_http("http://127.0.0.1:8000/openapi.json", 120)
+    wait_tcp("127.0.0.1", 8000, 120)
 
 
 def warmup_workflow(
@@ -478,7 +494,33 @@ def warmup_workflow(
     return summary
 
 
-def start_tunnel(secrets: dict[str, str], environment: dict[str, str]) -> None:
+def start_tunnel(secrets: dict[str, str], environment: dict[str, str]) -> str:
+    tunnel_mode = secrets.get("tunnel_mode", "managed")
+    (LOGS / "cloudflared.log").unlink(missing_ok=True)
+    if tunnel_mode == "quick":
+        if len(secrets.get("development_token", "")) < 32:
+            raise RuntimeError(
+                "Cloudflare Quick Tunnel requires a gateway development token of at least 32 characters"
+            )
+        start_process(
+            "cloudflared",
+            [
+                str(cloudflared()),
+                "tunnel",
+                "--no-autoupdate",
+                "--url",
+                "http://127.0.0.1:8000",
+            ],
+            environment,
+        )
+        gateway_url = wait_quick_tunnel_url()
+        (STATE / "gateway-url.txt").write_text(
+            gateway_url + "\n",
+            encoding="utf-8",
+        )
+        return gateway_url
+    if tunnel_mode != "managed":
+        raise RuntimeError("Cloudflare tunnel mode must be managed or quick")
     tunnel_token = secrets.get("tunnel_token", "")
     if not tunnel_token:
         raise RuntimeError("A named Cloudflare tunnel token is required")
@@ -490,6 +532,7 @@ def start_tunnel(secrets: dict[str, str], environment: dict[str, str]) -> None:
         tunnel_environment,
     )
     wait_tunnel_connected()
+    return ""
 
 
 def wait_tunnel_connected(timeout_seconds: int = 180) -> None:
@@ -513,6 +556,34 @@ def wait_tunnel_connected(timeout_seconds: int = 180) -> None:
     raise RuntimeError(f"cloudflared did not register the managed tunnel:\n{detail}")
 
 
+def wait_quick_tunnel_url(timeout_seconds: int = 180) -> str:
+    """Return the ephemeral HTTPS hostname printed by TryCloudflare."""
+    log_path = LOGS / "cloudflared.log"
+    pid_path = STATE / "cloudflared.pid"
+    deadline = time.monotonic() + timeout_seconds
+    last_lines: list[str] = []
+    while time.monotonic() < deadline:
+        if pid_path.is_file():
+            try:
+                os.kill(int(pid_path.read_text()), 0)
+            except (ValueError, OSError, ProcessLookupError) as exc:
+                raise RuntimeError(
+                    "cloudflared exited before creating the Quick Tunnel"
+                ) from exc
+        if log_path.is_file():
+            last_lines = log_path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            ).splitlines()[-50:]
+            for line in reversed(last_lines):
+                match = QUICK_TUNNEL_RE.search(line.lower())
+                if match:
+                    return match.group(0)
+        time.sleep(2)
+    detail = "\n".join(last_lines[-10:]) or "no cloudflared log output"
+    raise RuntimeError(f"cloudflared did not create a Quick Tunnel:\n{detail}")
+
+
 def main() -> int:
     for directory in (ROOT, STATE, LOGS, ROOT / "bootstrap", ROOT / "secrets"):
         directory.mkdir(parents=True, exist_ok=True)
@@ -532,7 +603,7 @@ def main() -> int:
     environment = runtime_environment(secrets)
     start_services(python, secrets)
     warmup = warmup_workflow(python, manifest, environment)
-    start_tunnel(secrets, environment)
+    gateway_url = start_tunnel(secrets, environment)
     print(
         "FORMFRAME_BOOTSTRAP_JSON:"
         + json.dumps(
@@ -543,6 +614,8 @@ def main() -> int:
                 "comfyui": manifest["comfyui"]["revision"],
                 "videox_fun": manifest["videox_fun"]["revision"],
                 "warmup": warmup,
+                "tunnel_mode": secrets.get("tunnel_mode", "managed"),
+                "gateway_url": gateway_url,
             },
             sort_keys=True,
         )

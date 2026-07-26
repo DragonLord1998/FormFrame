@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import tempfile
 import time
 import zipfile
@@ -9,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from bridge.cloudflare import CloudflareGateway, GatewayConfig, GatewayError
 from bridge.colab_cli import ColabCli, ColabCliConfig, ColabCliError, require_a100
@@ -17,6 +19,7 @@ from bridge.runtime_package import RuntimeSecrets, write_runtime_secrets
 from .config import FormFrameSettings
 
 ProgressCallback = Callable[[str, str, int, str], None]
+BOOTSTRAP_MARKER = "FORMFRAME_BOOTSTRAP_JSON:"
 
 
 class RemoteRuntimeError(RuntimeError):
@@ -56,21 +59,48 @@ class ColabRemoteRuntime:
                 config_path=settings.colab_config,
             )
         )
-        self.gateway = CloudflareGateway(
-            GatewayConfig(
-                base_url=settings.gateway_url,
-                access_client_id=settings.cloudflare_client_id,
-                access_client_secret=settings.cloudflare_client_secret,
-                development_token=settings.gateway_development_token,
+        self.development_token = ""
+        if settings.cloudflare_tunnel_mode == "quick":
+            self.development_token = (
+                settings.gateway_development_token or secrets.token_urlsafe(48)
             )
-        )
+        self.gateway_url = settings.gateway_url
+        self.gateway: CloudflareGateway | None = None
+        if settings.cloudflare_tunnel_mode == "managed":
+            self.gateway = CloudflareGateway(
+                GatewayConfig(
+                    base_url=settings.gateway_url,
+                    access_client_id=settings.cloudflare_client_id,
+                    access_client_secret=settings.cloudflare_client_secret,
+                )
+            )
         self.probe: dict[str, object] = {}
         self.transfer_metrics: dict[str, Any] = {}
         self.remote_cache_dir = settings.remote_cache_dir or repo_root / "data" / "remote-cache"
 
     def start(self, progress: ProgressCallback) -> dict[str, Any]:
         progress("provisioning", "Provisioning A100", 8, "Reconnecting or starting formframe-a100")
-        self.cli.ensure_a100_session()
+        _result, session_created = self.cli.ensure_a100_session_with_ownership()
+        try:
+            return self._start(progress)
+        except Exception as exc:
+            if self.gateway is not None:
+                self.gateway.close()
+            if not session_created:
+                raise
+            stopped = self.cli.stop()
+            if stopped.returncode:
+                cleanup_detail = (
+                    stopped.stderr
+                    or stopped.stdout
+                    or f"Failed to stop Colab session {self.settings.colab_session}"
+                )
+                raise RemoteRuntimeError(
+                    f"{exc}; automatic A100 cleanup also failed: {cleanup_detail}"
+                ) from exc
+            raise
+
+    def _start(self, progress: ProgressCallback) -> dict[str, Any]:
         progress("provisioning", "Verifying A100", 16, "Inspecting the actual Colab GPU")
         self.probe = self.cli.probe()
         require_a100(self.probe)
@@ -82,7 +112,8 @@ class ColabRemoteRuntime:
                     tunnel_token=self.settings.cloudflare_tunnel_token,
                     access_team_domain=self.settings.cloudflare_access_team_domain,
                     access_audience=self.settings.cloudflare_access_audience,
-                    development_token=self.settings.gateway_development_token,
+                    development_token=self.development_token,
+                    tunnel_mode=self.settings.cloudflare_tunnel_mode,
                     github_repo_url=self.settings.github_repo_url,
                     github_revision=self.settings.github_revision,
                     github_token=self.settings.github_token,
@@ -105,12 +136,25 @@ for value in (
             self.cli.upload(secrets, "/content/formframe/secrets/runtime.json")
             progress("restoring", "Restoring model cache", 44, "Installing pinned ComfyUI and model assets")
             bootstrap = self.repo_root / "backend" / "colab" / "bootstrap.py"
-            self.cli.exec_file(bootstrap, timeout_seconds=14400)
-        progress("warming", "Checking private gateway", 92, "Waiting for the managed Cloudflare route")
+            bootstrap_result = self.cli.exec_file(bootstrap, timeout_seconds=14400)
+        bootstrap_status = _parse_bootstrap_status(bootstrap_result.stdout)
+        if self.settings.cloudflare_tunnel_mode == "quick":
+            self.gateway_url = _require_quick_tunnel_url(
+                str(bootstrap_status.get("gateway_url", ""))
+            )
+            self.gateway = CloudflareGateway(
+                GatewayConfig(
+                    base_url=self.gateway_url,
+                    development_token=self.development_token,
+                )
+            )
+        progress("warming", "Checking private gateway", 92, "Waiting for the Cloudflare route")
         health = self._wait_gateway()
         progress("warming", "Benchmarking transfers", 96, "Measuring Colab CLI and Cloudflare paths")
         self.transfer_metrics = self._benchmark_transfers()
         health["transfer_metrics"] = self.transfer_metrics
+        health["tunnel_mode"] = self.settings.cloudflare_tunnel_mode
+        health["gateway_url"] = self.gateway_url
         if health.get("gpu") != "A100" or health.get("workflow") != "controlled-character-v1":
             raise RemoteRuntimeError("Remote gateway reported an incompatible runtime")
         return health
@@ -132,6 +176,7 @@ for value in (
         manifest_path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def _benchmark_transfers(self) -> dict[str, Any]:
+        gateway = self._require_gateway()
         payload = bytes((index * 31) % 256 for index in range(512 * 1024))
         with tempfile.TemporaryDirectory(prefix="formframe-benchmark-") as directory:
             root = Path(directory)
@@ -147,7 +192,7 @@ for value in (
             download_seconds = max(time.monotonic() - started, 1e-6)
             if destination.read_bytes() != payload:
                 raise RemoteRuntimeError("Colab CLI transfer benchmark hash mismatch")
-        cloudflare = self.gateway.benchmark(payload)
+        cloudflare = gateway.benchmark(payload)
         return {
             "colab_cli": {
                 "upload_mbps": len(payload) * 8 / upload_seconds / 1_000_000,
@@ -159,10 +204,11 @@ for value in (
         }
 
     def _wait_gateway(self, attempts: int = 90) -> dict[str, Any]:
+        gateway = self._require_gateway()
         last_error = ""
         for attempt in range(attempts):
             try:
-                return self.gateway.health()
+                return gateway.health()
             except GatewayError as exc:
                 last_error = str(exc)
                 time.sleep(min(5, 1 + attempt // 10))
@@ -192,6 +238,7 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
         local_job_dir: Path,
         progress: Callable[[int, str], None],
     ) -> RemoteRenderResult:
+        gateway = self._require_gateway()
         local_job_dir.mkdir(parents=True, exist_ok=True)
         remote_bundle = f"/content/formframe/inbox/{job_id}.ffjob"
         progress(62, "Negotiating reusable assets")
@@ -219,19 +266,19 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
         used_fallback = False
         try:
             progress(70, "Submitting metadata through Cloudflare")
-            self.gateway.submit(job_id, remote_bundle)
+            gateway.submit(job_id, remote_bundle)
             def live_progress(payload: dict[str, Any]) -> None:
                 remote_percent = int(payload.get("progress", 40))
                 local_percent = min(92, max(72, 70 + remote_percent // 5))
                 progress(local_percent, str(payload.get("stage", "Z-Image Turbo rendering")))
 
-            remote = self.gateway.wait_live(
+            remote = gateway.wait_live(
                 job_id,
                 timeout_seconds=1200,
                 on_event=live_progress,
             )
             progress(93, "Downloading preview through Cloudflare")
-            self.gateway.download_preview(job_id, local_job_dir / "preview.webp")
+            gateway.download_preview(job_id, local_job_dir / "preview.webp")
             result_path = str(remote.get("result_path") or f"/content/formframe/outbox/{job_id}/result.png")
         except GatewayError:
             used_fallback = True
@@ -264,11 +311,13 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
 
     def cancel(self, job_id: str) -> None:
         try:
-            self.gateway.cancel(job_id)
-        except GatewayError:
+            self._require_gateway().cancel(job_id)
+        except (GatewayError, RemoteRuntimeError):
             return
 
     def stop(self) -> None:
+        if self.gateway is not None:
+            self.gateway.close()
         result = self.cli.stop()
         if result.returncode:
             raise ColabCliError(
@@ -286,7 +335,7 @@ print("\\n".join(lines[-20:]) or "cloudflared log is unavailable")
             }
         hashes = [asset.sha256 for asset in assets]
         try:
-            missing = set(self.gateway.check_assets(hashes))
+            missing = set(self._require_gateway().check_assets(hashes))
             cache_checked = True
         except GatewayError:
             missing = set(hashes)
@@ -395,6 +444,51 @@ print("FORMFRAME_LORA_CACHE:verified")
             "uploaded": not cache_hit,
             "bulk_route": "colab-cli",
         }
+
+    def _require_gateway(self) -> CloudflareGateway:
+        if self.gateway is None:
+            raise RemoteRuntimeError("Cloudflare gateway has not been initialized")
+        return self.gateway
+
+
+def _parse_bootstrap_status(output: str) -> dict[str, Any]:
+    for line in reversed(output.splitlines()):
+        if not line.startswith(BOOTSTRAP_MARKER):
+            continue
+        try:
+            payload = json.loads(line[len(BOOTSTRAP_MARKER) :])
+        except json.JSONDecodeError as exc:
+            raise RemoteRuntimeError(
+                "Colab bootstrap returned malformed status JSON"
+            ) from exc
+        if not isinstance(payload, dict) or payload.get("status") != "ready":
+            raise RemoteRuntimeError("Colab bootstrap did not report ready")
+        return payload
+    raise RemoteRuntimeError("Colab bootstrap status marker is missing")
+
+
+def _require_quick_tunnel_url(value: str) -> str:
+    parsed = urlparse(value)
+    hostname = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise RemoteRuntimeError(
+            "Colab bootstrap returned an invalid Quick Tunnel URL"
+        ) from exc
+    if (
+        parsed.scheme != "https"
+        or not hostname.endswith(".trycloudflare.com")
+        or hostname == "trycloudflare.com"
+        or parsed.username
+        or parsed.password
+        or port is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise RemoteRuntimeError("Colab bootstrap returned an invalid Quick Tunnel URL")
+    return f"https://{hostname}"
 
 
 def _sha256(path: Path) -> str:

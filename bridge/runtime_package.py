@@ -12,15 +12,33 @@ class RuntimeSecrets:
     access_team_domain: str
     access_audience: str
     development_token: str = ""
+    tunnel_mode: str = "managed"
     github_repo_url: str = ""
     github_revision: str = ""
     github_token: str = ""
 
     def validate(self) -> None:
-        if not self.tunnel_token:
-            raise ValueError("Cloudflare named-tunnel token is required")
-        if not self.development_token and not (self.access_team_domain and self.access_audience):
-            raise ValueError("Cloudflare Access team domain and audience are required")
+        if self.tunnel_mode not in {"managed", "quick"}:
+            raise ValueError("Cloudflare tunnel mode must be managed or quick")
+        if self.tunnel_mode == "managed":
+            if not self.tunnel_token:
+                raise ValueError("Cloudflare named-tunnel token is required")
+            if not (self.access_team_domain and self.access_audience):
+                raise ValueError(
+                    "Cloudflare Access team domain and audience are required"
+                )
+            if self.development_token:
+                raise ValueError(
+                    "Gateway bearer authentication is only supported in Quick Tunnel mode"
+                )
+        elif len(self.development_token) < 32:
+            raise ValueError(
+                "Cloudflare Quick Tunnel requires a gateway bearer token of at least 32 characters"
+            )
+        if self.development_token and len(self.development_token) < 32:
+            raise ValueError(
+                "Gateway development bearer token must be at least 32 characters"
+            )
         if not self.github_repo_url:
             raise ValueError("GitHub repository URL is required")
         if not self.github_revision:
@@ -33,6 +51,7 @@ class RuntimeSecrets:
             "access_team_domain": self.access_team_domain,
             "access_audience": self.access_audience,
             "development_token": self.development_token,
+            "tunnel_mode": self.tunnel_mode,
             "github_repo_url": self.github_repo_url,
             "github_revision": self.github_revision,
             "github_token": self.github_token,

@@ -47,6 +47,7 @@ class FormFrameSettings:
     gateway_url: str
     cloudflare_client_id: str
     cloudflare_client_secret: str
+    cloudflare_tunnel_mode: str
     cloudflare_tunnel_token: str
     cloudflare_access_team_domain: str
     cloudflare_access_audience: str
@@ -71,6 +72,7 @@ class FormFrameSettings:
             gateway_url=_value("FORMFRAME_GATEWAY_URL").rstrip("/"),
             cloudflare_client_id=_value("FORMFRAME_CF_ACCESS_CLIENT_ID"),
             cloudflare_client_secret=_value("FORMFRAME_CF_ACCESS_CLIENT_SECRET"),
+            cloudflare_tunnel_mode=_value("FORMFRAME_CF_TUNNEL_MODE", "managed").lower(),
             cloudflare_tunnel_token=_value("FORMFRAME_CF_TUNNEL_TOKEN"),
             cloudflare_access_team_domain=_value("FORMFRAME_CF_ACCESS_TEAM_DOMAIN"),
             cloudflare_access_audience=_value("FORMFRAME_CF_ACCESS_AUDIENCE"),
@@ -87,13 +89,15 @@ class FormFrameSettings:
 
     @property
     def gateway_configured(self) -> bool:
+        if self.cloudflare_tunnel_mode == "quick":
+            return True
         if not self.gateway_url:
             return False
         parsed = urlparse(self.gateway_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return False
         has_access_token = bool(self.cloudflare_client_id and self.cloudflare_client_secret)
-        return has_access_token or bool(self.gateway_development_token)
+        return has_access_token
 
     @property
     def smplx_assets_available(self) -> bool:
@@ -121,18 +125,23 @@ class FormFrameSettings:
             errors.append("FORMFRAME_GITHUB_REPO_URL is required for Colab source checkout")
         if not COMMIT_RE.fullmatch(self.github_revision):
             errors.append("FORMFRAME_GITHUB_REVISION must be a full 40-character Git commit SHA")
-        if not self.gateway_configured:
-            errors.append(
-                "Configure FORMFRAME_GATEWAY_URL and Cloudflare Access service-token credentials"
-            )
-        if not self.cloudflare_tunnel_token:
-            errors.append("FORMFRAME_CF_TUNNEL_TOKEN is required for the managed Cloudflare tunnel")
-        if not self.gateway_development_token and not (
-            self.cloudflare_access_team_domain and self.cloudflare_access_audience
-        ):
-            errors.append(
-                "Configure FORMFRAME_CF_ACCESS_TEAM_DOMAIN and FORMFRAME_CF_ACCESS_AUDIENCE"
-            )
+        if self.cloudflare_tunnel_mode not in {"managed", "quick"}:
+            errors.append("FORMFRAME_CF_TUNNEL_MODE must be managed or quick")
+        elif self.cloudflare_tunnel_mode == "managed":
+            if not self.gateway_configured:
+                errors.append(
+                    "Configure FORMFRAME_GATEWAY_URL and Cloudflare Access service-token credentials"
+                )
+            if not self.cloudflare_tunnel_token:
+                errors.append(
+                    "FORMFRAME_CF_TUNNEL_TOKEN is required for the managed Cloudflare tunnel"
+                )
+            if not (
+                self.cloudflare_access_team_domain and self.cloudflare_access_audience
+            ):
+                errors.append(
+                    "Configure FORMFRAME_CF_ACCESS_TEAM_DOMAIN and FORMFRAME_CF_ACCESS_AUDIENCE"
+                )
         if not self.smplx_assets_available:
             errors.append(
                 "Set FORMFRAME_SMPLX_MODEL_DIR to licensed SMPL-X model files"

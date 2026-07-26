@@ -34,7 +34,13 @@ submit_lock: Optional[asyncio.Lock] = None
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
-app = FastAPI(title="FormFrame Private Gateway", version="1.0.0")
+app = FastAPI(
+    title="FormFrame Private Gateway",
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 
 def _job(job_id: str) -> RemoteJob:

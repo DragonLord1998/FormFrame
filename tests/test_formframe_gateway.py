@@ -7,14 +7,16 @@ import time
 import zipfile
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-TOKEN = "test-token"
+TOKEN = "test-token-" + "x" * 40
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
@@ -25,6 +27,7 @@ def _load_gateway(monkeypatch, tmp_path: Path, *, queue_size: int = 8):
     (workflows / source_workflow.name).write_bytes(source_workflow.read_bytes())
     monkeypatch.setenv("FORMFRAME_REMOTE_ROOT", str(tmp_path))
     monkeypatch.setenv("FORMFRAME_GATEWAY_DEVELOPMENT_TOKEN", TOKEN)
+    monkeypatch.setenv("FORMFRAME_CF_TUNNEL_MODE", "quick")
     monkeypatch.setenv("FORMFRAME_RUNTIME_ID", "runtime-test")
     monkeypatch.setenv("FORMFRAME_GATEWAY_MAX_QUEUE_SIZE", str(queue_size))
     module = importlib.import_module("backend.colab.formframe_gateway.app")
@@ -112,6 +115,16 @@ def test_gateway_health_and_content_addressed_assets(tmp_path: Path, monkeypatch
     health = client.get("/v1/health", headers=AUTH).json()
     assert health["runtime_id"] == "runtime-test"
     assert health["queue_size"] == 0
+    assert client.get("/v1/health").status_code == 401
+    assert client.get(
+        "/v1/health",
+        headers={"Authorization": "Bearer wrong"},
+    ).status_code == 401
+    assert client.get("/openapi.json").status_code == 404
+    assert client.get("/docs").status_code == 404
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/v1/events/job_missing"):
+            pass
 
     content = b"immutable asset"
     digest = hashlib.sha256(content).hexdigest()

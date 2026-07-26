@@ -12,6 +12,7 @@ from pathlib import Path
 PROBE_MARKER = "FORMFRAME_PROBE_JSON:"
 MAX_OUTPUT = 64 * 1024
 SAFE_SESSION = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+MISSING_SESSION = re.compile(r"(?i)\bsession\b.*\bnot found\b")
 
 
 class ColabCliError(RuntimeError):
@@ -104,15 +105,36 @@ class ColabCli:
     def status(self) -> CommandResult:
         return self.run(["status", "-s", self.config.session_name], check=False)
 
+    def session_active(self) -> bool:
+        current = self.status()
+        status_output = f"{current.stdout}\n{current.stderr}"
+        if MISSING_SESSION.search(status_output):
+            return False
+        if current.returncode:
+            raise ColabCliError(
+                current.stderr
+                or current.stdout
+                or f"Could not inspect Colab session {self.config.session_name}"
+            )
+        return True
+
     def ensure_a100_session(self) -> CommandResult:
+        result, _created = self.ensure_a100_session_with_ownership()
+        return result
+
+    def ensure_a100_session_with_ownership(self) -> tuple[CommandResult, bool]:
         if self.config.gpu.upper() != "A100":
             raise ColabCliError("FormFrame requires an A100 Colab runtime")
         current = self.status()
-        if current.returncode == 0:
-            return current
-        return self.run(
-            ["new", "-s", self.config.session_name, "--gpu", "A100"],
-            timeout_seconds=240,
+        status_output = f"{current.stdout}\n{current.stderr}"
+        if current.returncode == 0 and not MISSING_SESSION.search(status_output):
+            return current, False
+        return (
+            self.run(
+                ["new", "-s", self.config.session_name, "--gpu", "A100"],
+                timeout_seconds=240,
+            ),
+            True,
         )
 
     def stop(self) -> CommandResult:

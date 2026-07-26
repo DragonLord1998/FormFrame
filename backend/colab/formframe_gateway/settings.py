@@ -13,6 +13,7 @@ class GatewaySettings:
     access_team_domain: str
     access_audience: str
     development_token: str
+    tunnel_mode: str
     runtime_id: str
     max_queue_size: int
     max_asset_bytes: int
@@ -25,6 +26,7 @@ class GatewaySettings:
             access_team_domain=os.environ.get("FORMFRAME_CF_ACCESS_TEAM_DOMAIN", "").strip(),
             access_audience=os.environ.get("FORMFRAME_CF_ACCESS_AUDIENCE", "").strip(),
             development_token=os.environ.get("FORMFRAME_GATEWAY_DEVELOPMENT_TOKEN", "").strip(),
+            tunnel_mode=os.environ.get("FORMFRAME_CF_TUNNEL_MODE", "managed").strip().lower(),
             runtime_id=os.environ.get("FORMFRAME_RUNTIME_ID", "").strip() or "formframe-colab",
             max_queue_size=int(os.environ.get("FORMFRAME_GATEWAY_MAX_QUEUE_SIZE", "8")),
             max_asset_bytes=int(os.environ.get("FORMFRAME_GATEWAY_MAX_ASSET_BYTES", str(64 * 1024 * 1024))),
@@ -38,11 +40,25 @@ class GatewaySettings:
             raise RuntimeError("FORMFRAME_GATEWAY_MAX_QUEUE_SIZE must be at least 1")
         if self.max_asset_bytes < 1:
             raise RuntimeError("FORMFRAME_GATEWAY_MAX_ASSET_BYTES must be at least 1")
-        if not self.development_token and not (
+        if self.tunnel_mode not in {"managed", "quick"}:
+            raise RuntimeError("FORMFRAME_CF_TUNNEL_MODE must be managed or quick")
+        if self.development_token and len(self.development_token) < 32:
+            raise RuntimeError(
+                "FORMFRAME_GATEWAY_DEVELOPMENT_TOKEN must be at least 32 characters"
+            )
+        if self.tunnel_mode == "quick" and not self.development_token:
+            raise RuntimeError(
+                "Cloudflare Quick Tunnel requires a gateway development token"
+            )
+        if self.tunnel_mode == "managed" and self.development_token:
+            raise RuntimeError(
+                "Gateway development tokens are only supported in Quick Tunnel mode"
+            )
+        if self.tunnel_mode == "managed" and not (
             self.access_team_domain and self.access_audience
         ):
             raise RuntimeError(
-                "Cloudflare Access issuer/audience are required outside explicit development mode"
+                "Cloudflare Access issuer/audience are required in managed tunnel mode"
             )
 
     @property

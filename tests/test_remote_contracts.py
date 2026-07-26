@@ -18,11 +18,15 @@ from bridge.colab_cli import ColabCli, ColabCliConfig, ColabCliError, _redact, p
 from bridge.runtime_package import RuntimeSecrets, build_runtime_archive, write_runtime_secrets
 from services.local_controller.formframe.config import FormFrameSettings
 from services.local_controller.formframe.remote import (
+    BOOTSTRAP_MARKER,
     ColabRemoteRuntime,
+    RemoteRuntimeError,
     ReusableAsset,
     _cli_fallback_source,
     _bundle_without_reusable_assets,
     _identity_lora_asset,
+    _parse_bootstrap_status,
+    _require_quick_tunnel_url,
     _reusable_assets,
 )
 
@@ -38,6 +42,43 @@ def test_settings_fail_closed_without_external_configuration(monkeypatch):
     assert any("Cloudflare" in value for value in errors)
     assert any("FORMFRAME_GITHUB_REPO_URL" in value for value in errors)
     assert any("FORMFRAME_GITHUB_REVISION" in value for value in errors)
+
+
+def test_quick_tunnel_mode_needs_no_cloudflare_account_configuration(
+    monkeypatch,
+    tmp_path: Path,
+):
+    executable = tmp_path / "colab"
+    executable.write_text("#!/bin/sh\n")
+    executable.chmod(0o755)
+    smplx = tmp_path / "smplx"
+    smplx.mkdir()
+    (smplx / "SMPLX_NEUTRAL.npz").write_bytes(b"model")
+    gnm = tmp_path / "gnm"
+    gnm_model = gnm / "gnm" / "shape" / "data" / "versions" / "v3_0"
+    gnm_model.mkdir(parents=True)
+    (gnm_model / "gnm_head.npz").write_bytes(b"model")
+    values = {
+        "FORMFRAME_COLAB_CLI": str(executable),
+        "FORMFRAME_COLAB_GPU": "A100",
+        "FORMFRAME_CF_TUNNEL_MODE": "quick",
+        "FORMFRAME_GITHUB_REPO_URL": "https://github.com/example/formframe.git",
+        "FORMFRAME_GITHUB_REVISION": "0123456789abcdef0123456789abcdef01234567",
+        "FORMFRAME_SMPLX_MODEL_DIR": str(smplx),
+        "FORMFRAME_GNM_CHECKOUT": str(gnm),
+    }
+    for name in list(os.environ):
+        if name.startswith("FORMFRAME_"):
+            monkeypatch.delenv(name, raising=False)
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    settings = FormFrameSettings.from_environment()
+
+    assert settings.remote_readiness_errors() == []
+    runtime = ColabRemoteRuntime(settings, Path(__file__).resolve().parents[1])
+    assert runtime.gateway is None
+    assert len(runtime.development_token) >= 48
 
 
 def test_colab_probe_requires_actual_a100():
@@ -77,6 +118,86 @@ def test_colab_cli_uses_argument_array_and_exact_session(tmp_path: Path):
     ]
 
 
+def test_colab_cli_creates_session_when_status_returns_zero_but_reports_not_found(
+    tmp_path: Path,
+):
+    executable = tmp_path / "colab"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *\"status -s formframe-a100\"*)\n"
+        "    echo \"[colab] Session 'formframe-a100' not found.\"\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        "printf '%s\\n' \"$@\"\n"
+    )
+    executable.chmod(0o755)
+    cli = ColabCli(
+        ColabCliConfig(
+            executable=executable,
+            session_name="formframe-a100",
+            gpu="A100",
+            auth_provider="oauth2",
+        )
+    )
+
+    result, created = cli.ensure_a100_session_with_ownership()
+
+    assert created is True
+    assert result.stdout.splitlines() == [
+        "--auth",
+        "oauth2",
+        "new",
+        "-s",
+        "formframe-a100",
+        "--gpu",
+        "A100",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("session_created", "expected_stop_calls"),
+    [(True, 1), (False, 0)],
+)
+def test_remote_start_failure_stops_only_a100_created_by_that_start(
+    session_created: bool,
+    expected_stop_calls: int,
+):
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    class FakeCli:
+        def __init__(self):
+            self.stop_calls = 0
+
+        def ensure_a100_session_with_ownership(self):
+            return FakeResult(), session_created
+
+        def stop(self):
+            self.stop_calls += 1
+            return FakeResult()
+
+    runtime = object.__new__(ColabRemoteRuntime)
+    runtime.cli = FakeCli()
+    runtime.gateway = None
+    runtime.settings = type(
+        "Settings",
+        (),
+        {"colab_session": "formframe-a100"},
+    )()
+    runtime._start = lambda _progress: (_ for _ in ()).throw(
+        RemoteRuntimeError("bootstrap failed")
+    )
+
+    with pytest.raises(RemoteRuntimeError, match="bootstrap failed"):
+        runtime.start(lambda *_args: None)
+
+    assert runtime.cli.stop_calls == expected_stop_calls
+
+
 def test_colab_cli_redacts_token_flags():
     assert _redact("cloudflared run --token sensitive-value") == (
         "cloudflared run --token [REDACTED]"
@@ -114,7 +235,7 @@ def test_remote_gateway_rejects_plain_http():
         CloudflareGateway(
             GatewayConfig(
                 base_url="http://render.example.com",
-                development_token="test",
+                development_token="x" * 48,
             )
         )
 
@@ -123,7 +244,7 @@ def test_cloudflare_benchmark_verifies_echo_payload():
     gateway = CloudflareGateway(
         GatewayConfig(
             base_url="https://render.example.com",
-            development_token="test",
+            development_token="x" * 48,
         ),
         transport=httpx.MockTransport(
             lambda request: httpx.Response(200, content=request.content)
@@ -584,6 +705,27 @@ def test_runtime_package_contains_code_but_secrets_are_separate(tmp_path: Path):
     assert document["github_token"] == ""
 
 
+def test_quick_tunnel_runtime_secrets_need_only_ephemeral_bearer_auth(
+    tmp_path: Path,
+):
+    secret_path = write_runtime_secrets(
+        RuntimeSecrets(
+            tunnel_token="",
+            access_team_domain="",
+            access_audience="",
+            development_token="ephemeral-bearer-token-" + "x" * 32,
+            tunnel_mode="quick",
+            github_repo_url="https://github.com/example/formframe.git",
+            github_revision="0123456789abcdef0123456789abcdef01234567",
+        ),
+        tmp_path / "runtime.json",
+    )
+    document = json.loads(secret_path.read_text(encoding="utf-8"))
+    assert document["tunnel_mode"] == "quick"
+    assert document["tunnel_token"] == ""
+    assert document["development_token"] == "ephemeral-bearer-token-" + "x" * 32
+
+
 def test_cli_fallback_executes_the_pinned_github_checkout():
     source = _cli_fallback_source(
         "job_123456789abc",
@@ -612,6 +754,46 @@ def test_cloudflared_token_is_passed_only_through_environment(monkeypatch, tmp_p
     assert observed["environment"]["SAFE"] == "value"
 
 
+def test_cloudflared_quick_tunnel_needs_no_account_token(monkeypatch, tmp_path: Path):
+    observed = {}
+    executable = tmp_path / "cloudflared"
+    executable.write_text("")
+    logs = tmp_path / "logs"
+    state = tmp_path / "state"
+    logs.mkdir()
+    state.mkdir()
+
+    def fake_start_process(name, command, environment):
+        observed.update(name=name, command=command, environment=environment)
+
+    monkeypatch.setattr(bootstrap, "LOGS", logs)
+    monkeypatch.setattr(bootstrap, "STATE", state)
+    monkeypatch.setattr(bootstrap, "cloudflared", lambda: executable)
+    monkeypatch.setattr(bootstrap, "start_process", fake_start_process)
+    monkeypatch.setattr(
+        bootstrap,
+        "wait_quick_tunnel_url",
+        lambda: "https://formframe-test.trycloudflare.com",
+    )
+
+    gateway_url = bootstrap.start_tunnel(
+        {"tunnel_mode": "quick", "development_token": "x" * 48},
+        {"SAFE": "value"},
+    )
+
+    assert gateway_url == "https://formframe-test.trycloudflare.com"
+    assert observed["name"] == "cloudflared"
+    assert observed["command"] == [
+        str(executable),
+        "tunnel",
+        "--no-autoupdate",
+        "--url",
+        "http://127.0.0.1:8000",
+    ]
+    assert "TUNNEL_TOKEN" not in observed["environment"]
+    assert (state / "gateway-url.txt").read_text().strip() == gateway_url
+
+
 def test_tunnel_readiness_requires_registered_connection(monkeypatch, tmp_path: Path):
     logs = tmp_path / "logs"
     state = tmp_path / "state"
@@ -625,6 +807,50 @@ def test_tunnel_readiness_requires_registered_connection(monkeypatch, tmp_path: 
     monkeypatch.setattr(bootstrap, "LOGS", logs)
     monkeypatch.setattr(bootstrap, "STATE", state)
     bootstrap.wait_tunnel_connected(timeout_seconds=1)
+
+
+def test_quick_tunnel_url_is_discovered_from_live_cloudflared_log(
+    monkeypatch,
+    tmp_path: Path,
+):
+    logs = tmp_path / "logs"
+    state = tmp_path / "state"
+    logs.mkdir()
+    state.mkdir()
+    (logs / "cloudflared.log").write_text(
+        "INF Your quick Tunnel has been created! Visit it at "
+        "https://amber-frame-test.trycloudflare.com\n",
+        encoding="utf-8",
+    )
+    (state / "cloudflared.pid").write_text(str(os.getpid()), encoding="utf-8")
+    monkeypatch.setattr(bootstrap, "LOGS", logs)
+    monkeypatch.setattr(bootstrap, "STATE", state)
+
+    assert bootstrap.wait_quick_tunnel_url(timeout_seconds=1) == (
+        "https://amber-frame-test.trycloudflare.com"
+    )
+
+
+def test_quick_tunnel_bootstrap_status_requires_exact_cloudflare_hostname():
+    payload = _parse_bootstrap_status(
+        "noise\n"
+        + BOOTSTRAP_MARKER
+        + json.dumps(
+            {
+                "status": "ready",
+                "gateway_url": "https://amber-frame-test.trycloudflare.com",
+            }
+        )
+    )
+    assert _require_quick_tunnel_url(payload["gateway_url"]) == (
+        "https://amber-frame-test.trycloudflare.com"
+    )
+    with pytest.raises(RemoteRuntimeError, match="invalid Quick Tunnel URL"):
+        _require_quick_tunnel_url("https://trycloudflare.com.attacker.example")
+    with pytest.raises(RemoteRuntimeError, match="invalid Quick Tunnel URL"):
+        _require_quick_tunnel_url(
+            "https://amber-frame-test.trycloudflare.com:not-a-port"
+        )
 
 
 def test_colab_bootstrap_does_not_install_or_upload_private_geometry():

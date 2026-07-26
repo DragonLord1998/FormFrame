@@ -7,8 +7,9 @@ evaluate a real GNM Head plus SMPL-X body in an isolated geometry worker, displa
 the resulting GLB in Babylon.js, package aligned RGB/depth/pose conditioning, and
 run the immutable `controlled-character-v1` workflow on a private A100 Colab
 runtime. Colab CLI owns provisioning and bulk transfer; an authenticated,
-managed Cloudflare Tunnel carries commands and previews. ComfyUI stays bound to
-`127.0.0.1` inside Colab.
+Cloudflare Tunnel carries commands and previews. The default stable path uses a
+managed Tunnel + Access; live validation can use an ephemeral Quick Tunnel with
+a fresh strong bearer token. ComfyUI stays bound to `127.0.0.1` inside Colab.
 
 ## Run
 
@@ -34,8 +35,9 @@ the real backend:
    - the official Google Colab CLI and ADC authentication;
    - the GitHub repository URL and exact commit revision Colab should
      clone into `/content/formframe/source`;
-   - the stable Cloudflare hostname, named-tunnel token, Access audience, and
-     machine-to-machine service token;
+   - either `FORMFRAME_CF_TUNNEL_MODE=quick` for an account-free ephemeral test
+     route, or the stable Cloudflare hostname, named-tunnel token, Access
+     audience, and machine-to-machine service token for managed mode;
    - the generated GNM, SMPL-X, and geometry-Python paths.
 3. Run `./scripts/dev-real.sh`, open the studio, and press **Start Backend**.
 
@@ -53,6 +55,16 @@ live A100 comparison manifest, run:
 ```bash
 python scripts/create-comparison-matrix.py --manifest path/to/jobs/<job_id>/manifest.json
 ```
+
+To verify that the configured Colab account can allocate the required A100
+without leaving compute running, source `.env` and run:
+
+```bash
+python scripts/validate-colab-a100.py
+```
+
+The script provisions or reconnects the exact `formframe-a100` session, verifies
+the reported GPU and VRAM, and stops that same session in a `finally` block.
 
 ## Implemented path
 
@@ -82,7 +94,8 @@ python scripts/create-comparison-matrix.py --manifest path/to/jobs/<job_id>/mani
 - Measured transfer split: Colab CLI for bootstrap secrets, `.ffjob` bundles,
   reusable asset-cache misses, and final PNG downloads;
   Cloudflare for authenticated control, status, progress, and preview delivery
-- Authenticated Cloudflare client and private gateway with Access JWT validation
+- Authenticated Cloudflare client and private gateway with managed Access JWT
+  validation or a per-runtime strong bearer token in Quick Tunnel mode
 - Private ComfyUI supervisor and pinned Z-Image Turbo + ControlNet model manifest
 - Immutable Z-Image Turbo workflow with an optional `LoadZImageLora` stage and
   two-pass pose-then-depth ControlNet sampling
@@ -114,5 +127,11 @@ metadata. Raw references are labelled as awaiting training until a trained LoRA
 is attached.
 The local Mac remote cache stores source-revision and model-manifest metadata
 only; pinned model weights rehydrate inside the active Colab session.
+
+Quick Tunnel mode is intentionally limited to live validation. It discovers the
+ephemeral `https://*.trycloudflare.com` URL from the pinned remote
+`cloudflared` process, disables public FastAPI documentation, and requires a
+fresh bearer token on HTTP and WebSocket routes. Managed Tunnel + Access remains
+the stable production configuration.
 
 See [DESIGN.md](DESIGN.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
