@@ -194,6 +194,20 @@ button { color: inherit; }
   color: var(--bone); background: #302f29; font-size: 9px; text-align: center; cursor: pointer;
 }
 .reference-slot input[type="file"] { display: none; }
+.expression-summary {
+  min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 15px; padding: 11px 12px; border: 1px solid rgba(241,185,75,.18);
+  border-radius: 9px; background: rgba(241,185,75,.055); color: var(--saffron);
+}
+.expression-summary > span { display: flex; flex-direction: column; gap: 3px; }
+.expression-summary strong { color: var(--bone); font-size: 11px; }
+.expression-summary small { color: var(--muted); font-size: 9px; }
+.expression-launch {
+  width: 100%; min-height: 43px; display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: 1px solid rgba(241,185,75,.3); border-radius: 9px; color: #231e15;
+  background: var(--saffron); font-size: 10px; font-weight: 700; cursor: pointer;
+}
+.expression-launch:hover { background: #f7c760; }
 .field { display: block; margin: 0 0 17px; }
 .field-heading { justify-content: space-between; margin-bottom: 8px; font-size: 11px; }
 .field-heading span { color: #d5d0c5; }

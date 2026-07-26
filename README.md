@@ -32,7 +32,7 @@ the real backend:
 
 2. Copy `.env.example` to `.env` and configure:
    - the official Google Colab CLI and ADC authentication;
-   - the private GitHub repository URL and exact commit revision Colab should
+   - the GitHub repository URL and exact commit revision Colab should
      clone into `/content/formframe/source`;
    - the stable Cloudflare hostname, named-tunnel token, Access audience, and
      machine-to-machine service token;
@@ -47,7 +47,10 @@ the real backend:
 
 ## Implemented path
 
-- Local character, body, pose, expression, gaze, scene, camera, and render controls
+- Local character, body, scene, camera, and render controls
+- Dedicated GNM Expression Studio modal for expression, head pose, and gaze;
+  GNM, the neck connector, and SMPL-X remain aligned meshes rather than a
+  misleading remeshed topology
 - Real GNM v3 + SMPL-X worker, cached GLB export, and Babylon.js GLB display
 - Explicit pose ownership: SMPL-X owns body/global head pose; GNM owns identity
   and local expression
@@ -57,7 +60,7 @@ the real backend:
 - Immutable `controlled-character-v1` workflow identifier
 - Official Colab CLI A100 creation/reconnect, probe, upload/download, bootstrap,
   and CLI execution fallback
-- Colab bootstrap clones the private GitHub source repository at an explicit
+- Colab bootstrap clones the GitHub source repository at an explicit
   revision before installing sources and workflows
 - Measured transfer split: Colab CLI for bootstrap secrets, licensed assets,
   `.ffjob` bundles, reusable asset-cache misses, and final PNG downloads;

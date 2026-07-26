@@ -14,6 +14,7 @@
     Sparkles
   } from "@lucide/svelte";
   import { api, connectEvents } from "./lib/api.js";
+  import ExpressionStudio from "./lib/ExpressionStudio.svelte";
   import Inspector from "./lib/Inspector.svelte";
   import RenderHistory from "./lib/RenderHistory.svelte";
   import Viewport from "./lib/Viewport.svelte";
@@ -42,6 +43,7 @@
   let geometryUrl = "";
   let geometryTimer;
   let uploadingReference = "";
+  let expressionStudioOpen = false;
 
   $: rendering = jobs.some((job) => ["queued", "freezing", "exporting", "packaging", "rendering"].includes(job.status));
   $: canRender = ["ready", "rendering"].includes(runtime.status);
@@ -229,8 +231,17 @@
       onRender={renderFrame}
       onReference={addReference}
       onRemoveReference={removeReference}
+      onOpenExpression={() => (expressionStudioOpen = true)}
     />
   </main>
+
+  {#if expressionStudioOpen}
+    <ExpressionStudio
+      bind:project
+      meshUrl={geometryUrl}
+      onClose={() => (expressionStudioOpen = false)}
+    />
+  {/if}
 
   <RenderHistory {jobs} onCancel={cancelJob} />
 

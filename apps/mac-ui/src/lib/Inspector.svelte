@@ -10,6 +10,7 @@
   export let rendering;
   export let onReference;
   export let onRemoveReference;
+  export let onOpenExpression;
   export let uploadingReference = "";
 
   const referenceSlots = [
@@ -132,16 +133,15 @@
     </section>
     <section class="control-group">
       <h3>Face & gaze</h3>
-      <label class="select-field">Expression
-        <select bind:value={project.pose.expression}>
-          <option>Quiet confidence</option><option>Soft smile</option><option>Focused</option><option>Surprised</option>
-        </select>
-      </label>
-      <Field label="Expression" bind:value={project.pose.expression_strength} />
-      <Field label="Head turn" bind:value={project.pose.head_turn} min={-60} max={60} step={1} unit="°" />
-      <Field label="Head tilt" bind:value={project.pose.head_tilt} min={-35} max={35} step={1} unit="°" />
-      <Field label="Gaze horizontal" bind:value={project.pose.gaze_x} min={-1} max={1} step={0.01} />
-      <Field label="Gaze vertical" bind:value={project.pose.gaze_y} min={-1} max={1} step={0.01} />
+      <div class="expression-summary">
+        <span><strong>{project.pose.expression}</strong><small>GNM head · {Math.round(project.pose.expression_strength * 100)}% expression</small></span>
+        <Sparkles size={17} />
+      </div>
+      <p class="section-help">Edit the GNM face in its own focused workspace. The head and SMPL-X body stay as aligned meshes rather than being remeshed into one topology.</p>
+      <button class="expression-launch" type="button" on:click={onOpenExpression}>
+        <Sparkles size={17} />
+        Open GNM Expression Studio
+      </button>
     </section>
   {:else if mode === "Scene"}
     <header class="panel-header">

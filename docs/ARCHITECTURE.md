@@ -30,14 +30,17 @@ Colab render succeeded.
 ## Production adapters
 
 The production geometry adapter evaluates canonical GNM v3 head geometry and
-SMPL-X in an isolated Python 3.10+ worker, exports a two-mesh GLB, and projects
-the real SMPL-X joints. SMPL-X owns global head orientation; GNM head rotations
-stay neutral and contribute identity, local expression, and gaze.
+SMPL-X in an isolated Python 3.10+ worker, exports distinct `gnm_head`,
+`neck_connector`, and `smplx_body` meshes in one aligned GLB, and projects the
+real SMPL-X joints. The main viewport composes all three meshes. The modal GNM
+Expression Studio isolates `gnm_head` for facial direction without claiming
+that GNM and SMPL-X share or can be remeshed into one topology. SMPL-X owns
+global head orientation; GNM contributes identity, local expression, and gaze.
 
 The production runtime adapter must:
 
 1. provision or reconnect through Colab CLI;
-2. clone or fetch the private GitHub source repository into
+2. clone or fetch the GitHub source repository into
    `/content/formframe/source` at the configured commit revision;
 3. restore pinned model assets;
 4. bind ComfyUI to `127.0.0.1:8188`;
