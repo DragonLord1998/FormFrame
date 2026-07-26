@@ -294,6 +294,9 @@ def test_remote_bootstrap_runs_in_background_and_is_polled(
     assert hashlib.sha256(bootstrap.read_bytes()).hexdigest() in launcher
     assert "0" * 40 in launcher
     assert "/proc/{pid}/cmdline" in launcher
+    poller = runtime.cli.sources["bootstrap_poll"]
+    assert 'state not in {"Z", "X"}' in poller
+    assert 'str(script) in command' in poller
 
 
 def test_remote_bootstrap_poll_surfaces_remote_log_tail(
@@ -1105,6 +1108,19 @@ def test_colab_bootstrap_works_without_ensurepip_on_current_runtime():
     assert source.index('os.environ.setdefault("HF_HUB_DISABLE_XET", "1")') < (
         source.index("from huggingface_hub import")
     )
+
+
+def test_colab_bootstrap_installs_videox_custom_node_requirements():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "backend"
+        / "colab"
+        / "bootstrap.py"
+    ).read_text()
+    requirements = 'str(VIDEOX / "requirements.txt")'
+    editable = 'str(VIDEOX)'
+    assert requirements in source
+    assert source.index(requirements) < source.index(editable, source.index(requirements))
 
 
 def test_fixed_workflow_runs_pose_then_depth():

@@ -191,6 +191,10 @@ def install_sources(python: Path, manifest: dict[str, object]) -> None:
     clone_exact(comfy["repository"], comfy["revision"], COMFY)
     clone_exact(videox["repository"], videox["revision"], VIDEOX)
     run([str(python), "-m", "pip", "install", "-r", str(COMFY / "requirements.txt")], timeout=7200)
+    # VideoX-Fun's editable package metadata omits import-time custom-node
+    # dependencies such as onnxruntime. Install its pinned requirements file
+    # before registering the editable package so ComfyUI can load every node.
+    run([str(python), "-m", "pip", "install", "-r", str(VIDEOX / "requirements.txt")], timeout=7200)
     run([str(python), "-m", "pip", "install", "-e", str(VIDEOX)], timeout=7200)
     run(
         [str(python), "-m", "pip", "install", "-r", str(SOURCE / "backend" / "colab" / "requirements.txt")],

@@ -272,6 +272,7 @@ else:
 import os
 from pathlib import Path
 
+script = Path({remote_script!r})
 log = Path({remote_log!r})
 pid_path = Path({remote_pid!r})
 text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
@@ -288,7 +289,13 @@ else:
     try:
         pid = int(pid_path.read_text())
         os.kill(pid, 0)
-        alive = True
+        process = Path(f"/proc/{{pid}}")
+        state = process.joinpath("stat").read_text().split()[2]
+        command = process.joinpath("cmdline").read_bytes().replace(b"\\0", b" ").decode(
+            "utf-8",
+            errors="replace",
+        )
+        alive = state not in {{"Z", "X"}} and str(script) in command
     except (ValueError, OSError, ProcessLookupError):
         pass
     if alive:
