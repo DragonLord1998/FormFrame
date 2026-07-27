@@ -82,26 +82,30 @@ def _pose_cases() -> list[tuple[str, Project]]:
         project.render.width = 768
         project.render.height = 1024
         project.render.depth_strength = 0.85
-        project.render.pose_strength = 0.65
+        project.render.pose_strength = 0.5
         project.render.negative_prompt = (
-            "mannequin, skeleton, doll, robot, metallic body, cropped body, close-up, "
-            "headshot, distorted anatomy, duplicate limbs, plastic skin"
+            "headless, missing head, missing face, cropped head, mannequin, skeleton, "
+            "doll, robot, metallic body, cropped body, close-up, headshot, distorted "
+            "anatomy, duplicate limbs, plastic skin"
         )
         project.render.quality = "Final"
     neutral.render.prompt = (
         "Photorealistic full-body studio photograph of an adult woman with natural skin "
         "wearing a fitted black outfit, entire figure visible head to toe, standing in a "
-        "neutral open pose, centered on a plain seamless background"
+        "neutral open pose, complete head and face fully visible, centered on a plain "
+        "seamless background"
     )
     arms_up.render.prompt = (
         "Photorealistic full-body studio photograph of an adult woman with natural skin "
         "wearing a fitted black outfit, entire figure visible head to toe, both arms "
-        "raised overhead, centered on a plain seamless background"
+        "raised overhead, complete head and face fully visible, centered on a plain "
+        "seamless background"
     )
     stride.render.prompt = (
         "Photorealistic full-body studio photograph of an adult woman with natural skin "
         "wearing a fitted black outfit, entire figure visible head to toe, dynamic "
-        "twisted walking stride, centered on a plain seamless background"
+        "twisted walking stride, complete head and face fully visible, centered on a "
+        "plain seamless background"
     )
     return [("neutral", neutral), ("arms-up", arms_up), ("twisted-stride", stride)]
 
