@@ -2,7 +2,7 @@
   "formframe_workflow": "controlled-character-v1",
   "immutable": true,
   "status": "production-pinned-awaiting-live-a100-validation",
-  "description": "Pinned Z-Image Turbo, optional trained identity LoRA, and pose-then-depth ControlNet workflow contract.",
+  "description": "Pinned Z-Image Turbo, optional trained identity LoRA, and measured depth-then-pose ControlNet workflow contract.",
   "inputs": [
     "rgb",
     "depth",

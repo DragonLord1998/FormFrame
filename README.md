@@ -98,7 +98,8 @@ the reported GPU and VRAM, and stops that same session in a `finally` block.
   validation or a per-runtime strong bearer token in Quick Tunnel mode
 - Private ComfyUI supervisor and pinned Z-Image Turbo + ControlNet model manifest
 - Immutable Z-Image Turbo workflow with an optional `LoadZImageLora` stage and
-  two-pass pose-then-depth ControlNet sampling
+  measured two-pass depth-then-pose ControlNet sampling so the final pass keeps
+  the authored pose
 - `FormFrameJobLoader` and `FormFrameResultSaver` custom nodes
 - Runtime lifecycle, queue, progress, cancellation, preview/result endpoints
 - Explicit `Save compute / Stop A100` control that targets only the configured

@@ -126,16 +126,20 @@ class SceneState(BaseModel):
 
 class RenderSettings(BaseModel):
     prompt: str = (
-        "Editorial character portrait, soft directional studio light, "
-        "natural skin texture, restrained cinematic color"
+        "Full-body editorial character photograph, entire figure visible head to toe, "
+        "centered studio composition, soft directional light, natural skin texture, "
+        "restrained cinematic color"
     )
-    negative_prompt: str = "distorted anatomy, duplicate limbs, plastic skin, oversharpened"
+    negative_prompt: str = (
+        "cropped body, close-up, headshot, distorted anatomy, duplicate limbs, "
+        "plastic skin, oversharpened"
+    )
     seed: int = 184627
     width: int = Field(default=768, ge=512, le=2048)
     height: int = Field(default=1024, ge=512, le=2048)
     denoise: float = Field(default=0.55, ge=0, le=1)
-    depth_strength: float = Field(default=0.72, ge=0, le=1)
-    pose_strength: float = Field(default=0.34, ge=0, le=1)
+    depth_strength: float = Field(default=0.85, ge=0, le=1)
+    pose_strength: float = Field(default=1.0, ge=0, le=1)
     quality: Literal["Draft", "Studio", "Final"] = "Studio"
 
 

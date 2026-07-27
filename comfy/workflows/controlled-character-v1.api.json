@@ -60,11 +60,11 @@
         "shift": 3,
         "control_context_scale": [
           "1",
-          9
+          8
         ],
         "control_image": [
           "1",
-          2
+          1
         ],
         "inpaint_image": [
           "1",
@@ -109,11 +109,11 @@
         "shift": 3,
         "control_context_scale": [
           "1",
-          8
+          9
         ],
         "control_image": [
           "1",
-          1
+          2
         ],
         "inpaint_image": [
           "4",

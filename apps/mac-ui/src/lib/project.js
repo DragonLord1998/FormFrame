@@ -275,14 +275,15 @@ export function newProject() {
     },
     render: {
       prompt:
-        "Editorial character portrait, soft directional studio light, natural skin texture, restrained cinematic color",
-      negative_prompt: "distorted anatomy, duplicate limbs, plastic skin, oversharpened",
+        "Full-body editorial character photograph, entire figure visible head to toe, centered studio composition, soft directional light, natural skin texture, restrained cinematic color",
+      negative_prompt:
+        "cropped body, close-up, headshot, distorted anatomy, duplicate limbs, plastic skin, oversharpened",
       seed: 184627,
       width: 768,
       height: 1024,
       denoise: 0.55,
-      depth_strength: 0.72,
-      pose_strength: 0.34,
+      depth_strength: 0.85,
+      pose_strength: 1,
       quality: "Studio"
     },
     created_at: now,

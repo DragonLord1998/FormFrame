@@ -1123,12 +1123,14 @@ def test_colab_bootstrap_installs_videox_custom_node_requirements():
     assert source.index(requirements) < source.index(editable, source.index(requirements))
 
 
-def test_fixed_workflow_runs_pose_then_depth():
+def test_fixed_workflow_runs_depth_then_pose():
     path = Path(__file__).resolve().parents[1] / "comfy" / "workflows" / "controlled-character-v1.api.json"
     workflow = json.loads(path.read_text())
     prompt = workflow["prompt"]
-    assert prompt["4"]["inputs"]["control_image"] == ["1", 2]
-    assert prompt["5"]["inputs"]["control_image"] == ["1", 1]
+    assert prompt["4"]["inputs"]["control_image"] == ["1", 1]
+    assert prompt["4"]["inputs"]["control_context_scale"] == ["1", 8]
+    assert prompt["5"]["inputs"]["control_image"] == ["1", 2]
+    assert prompt["5"]["inputs"]["control_context_scale"] == ["1", 9]
     assert prompt["5"]["inputs"]["inpaint_image"] == ["4", 0]
     assert prompt["4"]["inputs"]["mask_image"] == ["1", 10]
     assert prompt["6"]["inputs"]["job_metadata"] == ["1", 11]

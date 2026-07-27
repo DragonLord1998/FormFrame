@@ -81,7 +81,21 @@ def _pose_cases() -> list[tuple[str, Project]]:
     for project in (neutral, arms_up, stride):
         project.render.width = 768
         project.render.height = 1024
+        project.render.depth_strength = 0.85
+        project.render.pose_strength = 1.0
         project.render.quality = "Final"
+    neutral.render.prompt = (
+        "Full-body studio character photograph, entire figure visible head to toe, "
+        "standing in a neutral open pose, centered on a plain seamless background"
+    )
+    arms_up.render.prompt = (
+        "Full-body studio character photograph, entire figure visible head to toe, "
+        "both arms raised overhead, centered on a plain seamless background"
+    )
+    stride.render.prompt = (
+        "Full-body studio character photograph, entire figure visible head to toe, "
+        "dynamic twisted walking stride, centered on a plain seamless background"
+    )
     return [("neutral", neutral), ("arms-up", arms_up), ("twisted-stride", stride)]
 
 
