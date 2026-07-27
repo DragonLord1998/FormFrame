@@ -277,13 +277,13 @@ export function newProject() {
       prompt:
         "Full-body editorial character photograph, entire figure visible head to toe, centered studio composition, soft directional light, natural skin texture, restrained cinematic color",
       negative_prompt:
-        "cropped body, close-up, headshot, distorted anatomy, duplicate limbs, plastic skin, oversharpened",
+        "mannequin, skeleton, doll, robot, metallic body, cropped body, close-up, headshot, distorted anatomy, duplicate limbs, plastic skin, oversharpened",
       seed: 184627,
       width: 768,
       height: 1024,
       denoise: 0.55,
       depth_strength: 0.85,
-      pose_strength: 1,
+      pose_strength: 0.65,
       quality: "Studio"
     },
     created_at: now,
